@@ -1,0 +1,112 @@
+/* Colours distilled from xo-space-architecture-chip.html (its --ui-* palette:
+   canvas, panel, header, border, text, muted, and the warning / danger / scope /
+   component hues). In-between tints are mixed from those, never new hues.
+   The accent is XO's green (#83D63A, the "O" of the mark). On the light canvas
+   the same hue is darkened for text so it keeps 4.5:1; fills stay brand green.
+   Type is Geist everywhere (Geist Mono only for code and ids), served
+   locally (Vercel, SIL OFL 1.1), as in the chip. */
+
+@font-face{font-family:"Geist";font-style:normal;font-weight:100 900;font-display:swap;src:url("../fonts/geist/Geist-Variable.woff2") format("woff2")}
+@font-face{font-family:"Geist Mono";font-style:normal;font-weight:100 900;font-display:swap;src:url("../fonts/geist/GeistMono-Variable.woff2") format("woff2")}
+
+/* Dark: chip --ui-canvas #1E1E1E is the page; --ui-panel #262626 the chrome. */
+:root{
+  color-scheme:dark;
+  --bg:#1E1E1E; --bg-2:#262626; --bg-3:#313131; --bg-4:#393939;     /* canvas, panel, hover (text 6%), pressed (text 10%) */
+  --bg-head:#2D2D2D;                                                  /* chip --ui-header: header bands, tab strips */
+  --line:#3E3E3E; --line-soft:#2E2E2E; --line-hover:#636363;          /* border, border/canvas, border-strong */
+  --ink:#E1E1E1; --ink-2:#C1C1C1; --ink-3:#909090; --ink-4:#878787;   /* text, text/muted, muted, quiet (4.6:1) */
+  --accent:#83D63A; --accent-fill:#83D63A; --accent-ink:#1E1E1E; --accent-hover:#96DC58;
+  --accent-rgb:131,214,58; --bg-rgb:30,30,30; --bg-2-rgb:38,38,38;
+  --err:#D7373F; --err-ink:#E68388;
+  --warn:#F5A623; --info:#75ADF1; --violet:#BF8DFF;
+  --mark-x:#E1E1E1; --mark-o:#83D63A;
+  --bubble:#313131; --bubble-line:#3E3E3E;
+  --code-bg:#262626;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.35),0 1px 1px rgba(0,0,0,.2);
+  --shadow-md:0 4px 14px rgba(0,0,0,.35),0 1px 3px rgba(0,0,0,.3);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.3);
+  --hairline:inset 0 1px 0 rgba(255,255,255,.035);
+  --scrim:rgba(0,0,0,.55);
+
+  --sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+
+  /* One type scale, human-sized (the chip: nothing below 10.5px, sentence case).
+     xs: counts, kbd · sm: secondary, meta · base: UI · md: titles, reading in docks
+     · lg: conversation prose · xl: section title · 2xl: empty-state title. */
+  --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:15px; --fs-xl:16px; --fs-2xl:20px;
+  --lh-ui:1.45; --lh-read:1.65;
+  --fw-medium:500; --fw-strong:600;
+
+  /* Geometry: soft and continuous. Radii grow with the size of the surface
+     (a 34px control gets 10px, a card 14px, the composer 22px). */
+  --r-xs:6px; --r-sm:8px; --r:10px; --r-lg:14px; --r-xl:18px; --r-2xl:22px; --r-pill:999px;
+  --h-ctl:34px; --h-bar:56px; --h-row:34px;
+
+  /* Motion. Feedback is fast, layout settles; nothing bounces.
+     Every animation is gated by prefers-reduced-motion in app.css. */
+  --ease:cubic-bezier(.22,.61,.36,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --dur-fast:120ms;   /* hover, press, colour */
+  --dur-base:180ms;   /* popovers, chips, entrance of one message */
+  --dur-slow:260ms;   /* sheets, drawers */
+}
+
+/* Light: chip --ui-canvas #FFFFFF / --ui-panel #F5F5F5. Applied for a light OS
+   preference unless the user picked dark, or when the user picked light. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --bg:#FFFFFF; --bg-2:#F5F5F5; --bg-3:#E8E8E8; --bg-4:#E0E0E0; --bg-head:#EAEAEA;
+    --line:#D0D0D0; --line-soft:#E8E8E8; --line-hover:#A3A3A3;
+    --ink:#1E1E1E; --ink-2:#414141; --ink-3:#6B6B6B; --ink-4:#737373;
+    --accent:#487620; --accent-fill:#83D63A; --accent-ink:#1E1E1E; --accent-hover:#76C134;
+    --accent-rgb:72,118,32; --bg-rgb:255,255,255; --bg-2-rgb:245,245,245;
+    --err:#C9252D; --err-ink:#B52128;
+    --warn:#8A4B0B; --info:#0851A7; --violet:#6D33B8;
+    --mark-x:#1E1E1E; --mark-o:#83D63A;
+    --bubble:#F0F0F0; --bubble-line:#E0E0E0;
+    --code-bg:#F5F5F5;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.06);
+    --shadow-md:0 4px 14px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.05);
+    --shadow-lg:0 8px 24px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.06);
+    --hairline:inset 0 1px 0 rgba(255,255,255,.7);
+    --scrim:rgba(30,30,30,.32);
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#FFFFFF; --bg-2:#F5F5F5; --bg-3:#E8E8E8; --bg-4:#E0E0E0; --bg-head:#EAEAEA;
+  --line:#D0D0D0; --line-soft:#E8E8E8; --line-hover:#A3A3A3;
+  --ink:#1E1E1E; --ink-2:#414141; --ink-3:#6B6B6B; --ink-4:#737373;
+  --accent:#487620; --accent-fill:#83D63A; --accent-ink:#1E1E1E; --accent-hover:#76C134;
+  --accent-rgb:72,118,32; --bg-rgb:255,255,255; --bg-2-rgb:245,245,245;
+  --err:#C9252D; --err-ink:#B52128;
+  --warn:#8A4B0B; --info:#0851A7; --violet:#6D33B8;
+  --mark-x:#1E1E1E; --mark-o:#83D63A;
+  --bubble:#F0F0F0; --bubble-line:#E0E0E0;
+  --code-bg:#F5F5F5;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:0 4px 14px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.05);
+  --shadow-lg:0 8px 24px rgba(0,0,0,.16),0 2px 6px rgba(0,0,0,.06);
+  --hairline:inset 0 1px 0 rgba(255,255,255,.7);
+  --scrim:rgba(30,30,30,.32);
+}
+
+/* High contrast, when the OS asks for it (as the chip does). */
+@media (prefers-contrast: more){
+  :root{--ink-3:#B0B0B0; --ink-4:#B0B0B0; --line:#5A5A5A; --line-hover:#8E8E8E}
+  :root[data-theme="light"]{--ink-3:#4B4B4B; --ink-4:#4B4B4B; --line:#8E8E8E; --line-hover:#6B6B6B}
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){--ink-3:#4B4B4B; --ink-4:#4B4B4B; --line:#8E8E8E; --line-hover:#6B6B6B}
+}
+
+/* Subtle state tints, mixed like the chip's --ui-*-subtle (never new hues). */
+:root{
+  --accent-subtle:color-mix(in srgb,var(--accent-fill) 16%,var(--bg-2));
+  --warn-subtle:color-mix(in srgb,var(--warn) 14%,var(--bg-2));
+  --err-subtle:color-mix(in srgb,var(--err) 14%,var(--bg-2));
+  --info-subtle:color-mix(in srgb,var(--info) 14%,var(--bg-2));
+}

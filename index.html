@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>XO Space Cowork</title>
+<meta name="description" content="XO Space Cowork: what needs you across your projects, the workspace and project coordinators, threads and live updates.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='20 155 460 190'%3E%3Cg fill='none' stroke-width='34'%3E%3Cpolyline stroke='%23e1e1e1' points='36.99 165.84 118.47 247.31 31.16 334.61'/%3E%3Cpolyline stroke='%23e1e1e1' points='244.91 165.84 163.44 247.31 250.74 334.61'/%3E%3Cpolyline stroke='%2383d63a' points='328.12 165.06 246.65 246.53 333.95 333.84'/%3E%3Cpolyline stroke='%2383d63a' points='380.51 165.06 461.99 246.53 374.68 333.84'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preload" href="fonts/geist/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<script>
+  // Apply the saved theme before first paint (no flash).
+  try { const t = localStorage.getItem("xo-chat-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar" aria-label="Navigation">
+    <div class="side-top">
+      <div class="brand"><span class="brand-mark" id="brand-mark"></span><b>Space</b><span>Cowork</span></div>
+      <button type="button" class="icon-btn" id="sidebar-close" title="Hide sidebar" aria-label="Hide sidebar"></button>
+    </div>
+    <button type="button" class="create-btn" id="create-btn" data-create-project><span id="create-ic"></span>Create XO Project</button>
+    <label class="side-search">
+      <span class="ss-ic" id="search-ic"></span>
+      <input id="chat-filter" type="search" placeholder="Jump to chat" autocomplete="off" spellcheck="false" aria-label="Filter chats">
+      <kbd id="kbd-hint">⌘K</kbd>
+    </label>
+    <nav class="chan-list" aria-label="Chats">
+      <button type="button" class="chan chan-home" id="nav-home" data-home><span class="chan-ic" id="home-ic"></span><span class="chan-name">Home</span><span class="n n-wait" id="home-count" hidden></span></button>
+      <div id="chat-list"></div>
+    </nav>
+  </aside>
+  <div class="scrim" id="side-scrim" hidden></div>
+
+  <!-- Main -->
+  <main class="main" id="main">
+    <header class="topbar">
+      <button type="button" class="icon-btn" id="sidebar-open" title="Show sidebar" aria-label="Show sidebar"></button>
+      <div class="title">
+        <span class="title-ic" id="title-ic"></span>
+        <h1 id="chat-title">Home</h1>
+      </div>
+      <div class="status" id="status"></div>
+      <div class="top-actions">
+        <button type="button" class="ghost-btn" id="threads-toggle" aria-controls="panel" aria-expanded="false">
+          <span id="threads-ic"></span><span class="tt-label">Threads</span><span class="count" id="threads-count" hidden></span>
+        </button>
+        <button type="button" class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle light/dark theme"></button>
+      </div>
+    </header>
+
+    <!-- Home: what needs you, what is working, what is ready -->
+    <section class="view home" id="home" aria-label="Home" hidden>
+      <div class="home-scroll" id="home-scroll">
+        <div class="home-col">
+          <div id="home-body"></div>
+        </div>
+      </div>
+      <div class="composer-wrap">
+        <form class="composer" id="home-composer" autocomplete="off">
+          <textarea id="home-input" rows="1" placeholder="Ask the workspace anything…" aria-label="Ask the workspace"></textarea>
+          <div class="composer-row">
+            <span class="composer-note" id="home-note"></span>
+            <button type="submit" class="send" id="home-send" aria-label="Send to the workspace" disabled></button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- A chat -->
+    <section class="view chatview" id="chatview" aria-label="Conversation" hidden>
+      <div class="scroller" id="scroller">
+        <div class="column history-top" id="history-top" hidden></div>
+        <div class="column" id="timeline" role="log" aria-label="Conversation"></div>
+        <div class="column typing-wrap" id="typing" hidden></div>
+        <div class="column fresh" id="fresh" hidden></div>
+      </div>
+
+      <button type="button" class="jump" id="jump" hidden><span id="jump-ic"></span><span id="jump-label">Jump to latest</span></button>
+
+      <div class="composer-wrap">
+        <div class="waiting-strip" id="waiting-strip" hidden></div>
+        <form class="composer" id="composer" autocomplete="off">
+          <textarea id="input" rows="1" placeholder="Message the coordinator…" aria-label="Message"></textarea>
+          <div class="composer-row">
+            <span class="composer-note" id="composer-note"></span>
+            <span class="draft-note" id="draft-note"></span>
+            <button type="submit" class="send" id="send" aria-label="Send message" disabled></button>
+          </div>
+        </form>
+        <div class="composer-hint" aria-hidden="true"><span><kbd>Enter</kbd> send</span><span><kbd>Shift</kbd><kbd>Enter</kbd> new line</span></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Threads panel: list or a single thread -->
+  <aside class="panel" id="panel" aria-label="Threads" hidden>
+    <div class="panel-list" id="panel-list">
+      <header class="panel-head">
+        <h2>Threads <small id="threads-total"></small></h2>
+        <button type="button" class="icon-btn" id="panel-close" title="Close (Esc)" aria-label="Close threads"></button>
+      </header>
+      <div class="panel-body" id="thread-list"></div>
+    </div>
+    <div class="panel-detail" id="panel-detail" hidden>
+      <header class="panel-head">
+        <button type="button" class="icon-btn" id="detail-back" title="All threads" aria-label="Back to all threads"></button>
+        <span class="crumb" id="detail-crumb">Thread</span>
+        <button type="button" class="icon-btn" id="detail-close" title="Close (Esc)" aria-label="Close thread"></button>
+      </header>
+      <div class="panel-body" id="detail-scroll">
+        <div id="detail-head"></div>
+        <div class="td-msgs" id="detail-msgs"></div>
+        <div id="detail-typing" hidden></div>
+      </div>
+      <form class="composer composer-sm" id="thread-composer" autocomplete="off">
+        <textarea id="thread-input" rows="1" placeholder="Reply in thread…" aria-label="Reply in thread"></textarea>
+        <div class="composer-row">
+          <span class="composer-note" id="thread-note"></span>
+          <button type="submit" class="send" id="thread-send" aria-label="Send to thread" disabled></button>
+        </div>
+      </form>
+    </div>
+  </aside>
+  <div class="scrim scrim-panel" id="panel-scrim" hidden></div>
+</div>
+
+<!-- Create XO Project -->
+<dialog class="dlg" id="create-dlg" aria-labelledby="create-title">
+  <form id="create-form" method="dialog" autocomplete="off" novalidate>
+    <header class="dlg-head">
+      <span class="dlg-ic" id="dlg-ic"></span>
+      <div><h2 id="create-title">Create XO Project</h2><p>A new project with its own coordinator, plan and memory.</p></div>
+    </header>
+    <label class="field">
+      <span>Project name</span>
+      <input id="cp-name" name="name" required maxlength="80" placeholder="e.g. Billing API">
+      <small class="cp-where" id="cp-where"></small>
+    </label>
+    <label class="field">
+      <span>What is it for? <em>optional</em></span>
+      <textarea id="cp-desc" name="description" rows="3" maxlength="600" placeholder="One or two sentences. The coordinator uses this to write the project brief."></textarea>
+    </label>
+    <p class="dlg-err" id="cp-err" role="alert" hidden></p>
+    <footer class="dlg-foot">
+      <button type="button" class="btn" id="cp-cancel">Cancel</button>
+      <button type="submit" class="btn btn-pri" id="cp-submit">Create project</button>
+    </footer>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+<div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

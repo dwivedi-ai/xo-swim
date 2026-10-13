@@ -1,0 +1,15 @@
+# Working documents (kept local, not shared)
+docs/
+research_notes/
+reports/
+
+# Runtime
+.server.log
+.server.pid
+__pycache__/
+*.pyc
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
