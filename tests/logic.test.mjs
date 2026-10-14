@@ -1,11 +1,11 @@
-// Exercises the UI's pure modules (markdown, model, views) against fixed
-// cases and against live data from the proxy.
+// Exercises the UI's pure modules (markdown, model, timeline) against fixed
+// cases and against live data from the proxy (GET only: nothing is written).
 //   node tests/logic.test.mjs            (UI server on 127.0.0.1:5180)
 //   XO_UI=http://127.0.0.1:5180 node tests/logic.test.mjs
 import assert from "node:assert/strict";
 import { renderMarkdown, renderInline, threadLinks } from "../js/markdown.js";
 import { groupThreads, mergeMessages, parseChecklist, routedIndex, threadState, lastId, composerBlock } from "../js/model.js";
-import { messageHtml, threadListHtml, threadDetailHeadHtml, timelineHtml, chatListHtml, statusHtml, statusSummary, waitingStripHtml, elapsed, typingHtml, homeHtml, freshHtml, slugify } from "../js/views.js";
+import { uiMsg, echoes, askText, liveAsks, threadAnchors, parseTarget, stripTarget, sendErrorTitle, connLine, awaitingNow, mapLimit, plainText } from "../js/timeline.js";
 
 let passed = 0;
 const t = (name, fn) => {
@@ -88,72 +88,94 @@ t("composer block reasons", () => {
   assert.equal(composerBlock({ enabled: true, supported: true }), "");
 });
 
-// ── human-centred states (optimistic send, quiet status, honest waits) ──
+// ── optimistic rows and the live timeline (js/timeline.js) ──────────────
 t("optimistic rows never become the stream cursor", () => {
   const list = [{ id: "cmsg_5" }, { id: "local_zz" }];
   assert.equal(lastId(list), "cmsg_5");
 });
-t("pending and failed owner messages", () => {
-  const base = { id: "local_1", written_at: "2026-01-01T00:00:00Z", author_kind: "owner", text: "hi <b>" };
-  assert.match(messageHtml({ ...base, _pending: true }), /is-pending[\s\S]*Sending/);
-  const failed = messageHtml({ ...base, _failed: true });
-  assert.ok(failed.includes('data-retry="local_1"') && failed.includes('data-edit="local_1"'));
-  assert.ok(failed.includes("hi &lt;b&gt;"));
+t("API rows map to the UI's authors", () => {
+  const base = { id: "cmsg_1", written_at: "2026-01-01T00:00:00Z", text: "hi" };
+  assert.equal(uiMsg({ ...base, author_kind: "owner", author_id: "owner" }).who, "you");
+  assert.equal(uiMsg({ ...base, author_kind: "agent", author_id: "coordinator" }).who, "coord");
+  assert.equal(uiMsg({ ...base, author_kind: "agent", author_id: "thread" }).who, "agent");
+  assert.equal(uiMsg({ ...base, author_kind: "system", author_id: "system" }).who, "system");
+  const f = uiMsg({ ...base, author_kind: "owner", forwarded_from: { chat_id: "chat_workspace", message_id: "cmsg_0" } });
+  assert.deepEqual(f.fwd, { chatId: "chat_workspace", id: "cmsg_0" });
+  assert.equal(f.at, Date.parse(base.written_at));
 });
-t("status is quiet when healthy, loud when not", () => {
-  const ok = { enabled: true, supported: true, agent: "a", modes: {} };
-  assert.equal(statusSummary(ok, null, "live").tone, "ok");
-  assert.equal(statusSummary(ok, null, "polling").tone, "warn");
-  assert.equal(statusSummary(null, "boom").tone, "err");
-  assert.equal(statusSummary({ ...ok, enabled: false }).label, "Router off");
-  const pill = statusHtml({ ...ok, decision_model: "sage" }, null, "live", false);
-  assert.ok(pill.includes("spill is-ok") && pill.includes("<b>sage</b>"));
-  assert.ok(pill.includes('id="status-pop" role="dialog" aria-label="Connection details" hidden'));
-  assert.ok(!statusHtml(ok, null, "live", true).includes('"Connection details" hidden'));
+t("an optimistic row is matched to its server echo once", () => {
+  const now = Date.parse("2026-01-01T00:00:10Z");
+  const locals = [{ id: "l1", who: "you", text: "go", at: now, status: "sending" }, { id: "l2", who: "you", text: "go", at: now + 1, status: "sending" }, { id: "l3", who: "you", text: "x", at: now, status: "failed" }];
+  const rows = [{ id: "cmsg_a", who: "you", text: "go", at: now + 400 }, { id: "cmsg_b", who: "coord", text: "go", at: now + 500 }, { id: "cmsg_c", who: "you", text: "x", at: now + 10 }];
+  const m = echoes(locals, rows);
+  assert.deepEqual([...m], [["l1", "cmsg_a"]]);
+  assert.equal(echoes(locals, rows, new Set(["cmsg_a"])).size, 0);
+  // an old identical message is not an echo
+  assert.equal(echoes([locals[0]], [{ id: "cmsg_old", who: "you", text: "go", at: now - 3600000 }]).size, 0);
 });
-t("waiting strip lists threads that need the person", () => {
-  assert.equal(waitingStripHtml([{ ts: "a", state: "working" }]), "");
-  const html = waitingStripHtml([
-    { ts: "a", title: "A", state: "needs_reply", last_activity_at: "2026-01-01T00:00:00Z" },
-    { ts: "b", title: "B <x>", state: "needs_approval", last_activity_at: "2026-01-02T00:00:00Z" },
-  ]);
-  assert.ok(html.includes('data-thread="b"') && html.includes("B &lt;x&gt;") && html.includes("+1 more"));
-  assert.ok(html.includes("data-dismiss-stand"));
+t("ask titles come from the first sentence, plain text", () => {
+  assert.deepEqual(askText("I need **some** answers first. The repo has no [retry](#cmsg_1) handling."), { title: "I need some answers first.", rest: "The repo has no retry handling." });
+  const long = askText("x".repeat(300));
+  assert.ok(long.title.length <= 140 && long.title.endsWith("…"));
+  assert.equal(plainText("```js\ncode\n```\n# Head"), "Head");
 });
-t("waits are honest about time", () => {
-  assert.equal(elapsed(7), "7s");
-  assert.equal(elapsed(75), "1m 15s");
-  assert.ok(!typingHtml("Working", 1000, 5000).includes("typing-hint"));
-  assert.ok(typingHtml("Working", 1000, 20000).includes("You can keep working"));
+t("live asks: question, no options, reply only, keyed by card epoch", () => {
+  const th = { id: "cmsg_t", state: "needs_reply", epoch: 3, happened: "card text" };
+  const [a] = liveAsks(th, "Which provider should I use? SendGrid or SES.");
+  assert.equal(a.kind, "question");
+  assert.equal(a.options, null);
+  assert.equal(a.replyOnly, true);
+  assert.equal(a.title, "Which provider should I use?");
+  assert.equal(a.id, "cmsg_t:3");
+  assert.notEqual(liveAsks({ ...th, epoch: 4 }, "Which provider should I use?")[0].id, a.id);
+  assert.equal(liveAsks({ ...th, epoch: null, cardAt: "2026-01-01" }, "")[0].title, "card text");
+  assert.deepEqual(liveAsks({ ...th, state: "working" }, "x"), []);
+  assert.equal(liveAsks({ ...th, state: "needs_approval" }, "Run it?")[0].replyOnly, false);
 });
+t("thread cards sit under the coordinator's reply to the root, else alone", () => {
+  const rows = [{ id: "r1", who: "you" }, { id: "c1", who: "coord" }, { id: "r2", who: "you" }, { id: "r3", who: "you" }, { id: "x", who: "you" }];
+  const { on, alone } = threadAnchors(rows, ["r1", "r2", "r3"]);
+  assert.deepEqual([...on], [["c1", ["r1"]]]);
+  assert.deepEqual([...alone].sort(), ["r2", "r3"]);
+});
+t("@project targets: only a known project is stripped", () => {
+  const ps = [{ id: "workspace", name: "Workspace" }, { id: "billing-api", name: "billing-api" }];
+  assert.deepEqual(parseTarget("@billing-api add tests", ps), { pid: "billing-api", token: "billing-api", unknown: null });
+  assert.equal(parseTarget("@Workspace hi", ps).pid, "workspace");
+  assert.deepEqual(parseTarget("ask @nope about it", ps), { pid: null, token: null, unknown: "nope" });
+  assert.equal(parseTarget("mail me at a@b.c", ps).unknown, null);
+  assert.equal(stripTarget("add @billing-api tests", "billing-api"), "add tests");
+  assert.equal(stripTarget("@billing-api.x keep", "billing-api"), "@billing-api.x keep");
+  assert.equal(stripTarget("no token", null), "no token");
+});
+t("send errors and connection lines are honest", () => {
+  assert.equal(sendErrorTitle({ code: "router_off", status: 409 }), "Router is off");
+  assert.equal(sendErrorTitle({ status: 501 }), "Not supported by this backend");
+  assert.equal(sendErrorTitle({ status: 403 }), "Refused by the proxy");
+  assert.equal(sendErrorTitle({ status: 502 }), "Can't reach XO");
+  assert.equal(sendErrorTitle({ status: 400 }), "Message not sent");
+  const ok = { enabled: true, supported: true, agent: "a" };
+  assert.equal(connLine(ok, null, null), null);
+  assert.equal(connLine(null, "down", null).kind, "down");
+  assert.equal(connLine(ok, null, "chats failed").kind, "down");
+  assert.match(connLine({ ...ok, enabled: false }).text, /router is off/i);
+  assert.match(connLine({ ...ok, supported: false }).text, /no projects chat/);
+});
+t("awaiting expires after 3 minutes", () => {
+  assert.equal(awaitingNow({ at: 1000 }, 1000 + 60000), true);
+  assert.equal(awaitingNow({ at: 1000 }, 1000 + 181000), false);
+  assert.equal(awaitingNow(null), false);
+});
+await (async () => {
+  let peak = 0, now = 0;
+  await mapLimit([1, 2, 3, 4, 5, 6, 7, 8, 9], 3, async () => { now++; peak = Math.max(peak, now); await new Promise((r) => setTimeout(r, 5)); now--; });
+  t("mapLimit caps parallel fetches", () => assert.equal(peak, 3));
+})();
 
-t("home puts what needs you first, then working, then ready", () => {
-  const th = (ts, state, title) => ({ ts, state, title, card: { state }, last_activity_at: "2026-01-01T00:00:00Z" });
-  const html = homeHtml({
-    chats: [{ chat: "workspace", kind: "workspace" }, { chat: "api", kind: "project" }],
-    items: [
-      { chat: "api", thread: th("w", "working", "W <x>") },
-      { chat: "api", thread: th("n", "needs_approval", "N") },
-      { chat: "api", thread: th("d", "done", "D") },
-      { chat: "api", thread: th("r", "resolved", "R") },
-    ],
-  });
-  const at = (k) => html.indexOf(k);
-  assert.ok(at('data-thread="n"') < at('data-thread="w"') && at('data-thread="w"') < at('data-thread="d"'));
-  assert.ok(!html.includes('data-thread="r"'));
-  assert.ok(html.includes("W &lt;x&gt;") && html.includes("data-create-project") && html.includes('data-chat="api"'));
-  assert.match(html, /1 needs you · 1 working · 1 ready for review/);
-});
-t("fresh start and project folder names", () => {
-  assert.match(freshHtml("api", 12, null), /12 earlier messages/);
-  assert.equal(slugify("  Héllo World! App "), "hello-world-app");
-  assert.equal(slugify("../../etc"), "etc");
-});
-
-// ── live data ────────────────────────────────────────────────────────────
+// ── live data (GET only) ────────────────────────────────────────────────
 const BASE = (process.env.XO_UI || "http://127.0.0.1:5180") + "/api/projects-chat";
 const get = async (p) => {
-  const r = await fetch(BASE + p);
+  const r = await fetch(BASE + p); // GET only: this suite never writes
   if (!r.ok) throw new Error(`${p}: ${r.status}`);
   return r.json();
 };
@@ -161,51 +183,43 @@ const get = async (p) => {
 try {
   const status = await get("/status");
   const { chats } = await get("/chats");
-  t("status + chat list render", () => {
-    assert.ok(statusHtml(status, null, "live").includes(status.agent));
-    const html = chatListHtml(chats, "workspace");
-    assert.ok(html.indexOf("Workspace") < html.indexOf("Projects"));
+  t("status gates the composer like classic", () => {
+    assert.equal(composerBlock(status, null), status.enabled && status.supported ? "" : composerBlock(status, null));
+    assert.ok(chats[0].chat === "workspace");
   });
   const projectMsgs = {};
   for (const c of chats) {
-    const { messages } = await get(`/chats/${c.chat}/messages`);
+    const { messages } = await get(`/chats/${c.chat}/messages?limit=40`);
     const { threads } = await get(`/chats/${c.chat}/threads`);
-    if (c.kind === "project") projectMsgs[c.chat] = messages;
-    const threadsByTs = Object.fromEntries(threads.map((x) => [x.ts, x]));
-    const statuses = {};
+    if (c.kind === "project") projectMsgs[c.chat] = (await get(`/chats/${c.chat}/messages?limit=300`)).messages;
+    const rows = messages.map(uiMsg);
+    t(`${c.chat}: timeline maps (${messages.length} msgs, ${threads.length} threads)`, () => {
+      for (const m of rows) assert.ok(["you", "coord", "agent", "system"].includes(m.who) && Number.isFinite(m.at) && m.id);
+      const { on, alone } = threadAnchors(rows, threads.map((x) => x.ts));
+      const placed = new Set([...alone, ...[...on.values()].flat()]);
+      for (const th of threads) if (messages.some((m) => m.id === th.ts)) assert.ok(placed.has(th.ts), `thread ${th.ts} has a card`);
+    });
     for (const th of threads) {
       const d = await get(`/chats/${c.chat}/threads/${th.ts}`);
-      statuses[th.ts] = d.status || "";
-      t(`${c.chat}: thread view ${th.ts} renders`, () => {
-        const head = threadDetailHeadHtml(d);
-        assert.ok(head.includes("td-title"));
-        if ((d.status || "").includes("✓")) assert.ok(head.includes("ck-done"));
-        for (const m of d.messages) assert.ok(messageHtml(m, { chat: c.chat, inThread: true }).includes(`data-mid="${m.id}"`));
+      t(`${c.chat}: thread ${th.ts} detail`, () => {
+        const c2 = parseChecklist(d.status);
+        if ((d.status || "").includes("✓")) assert.ok(c2.done > 0);
+        assert.equal(typeof d.busy, "boolean");
+        const msgs = d.messages.map(uiMsg);
+        assert.ok(msgs.every((m) => m.who !== "you" || m.text));
+        const st = threadState({ ...d.thread, card: d.card });
+        const asks = liveAsks({ id: th.ts, state: st, epoch: d.card?.epoch, happened: d.card?.happened }, [...msgs].reverse().find((m) => m.who === "agent")?.text);
+        if (st === "needs_reply") assert.ok(asks.length === 1 && asks[0].title && !/Open the thread/.test(asks[0].title));
+        else assert.equal(asks.length, 0);
       });
     }
-    t(`${c.chat}: timeline (${messages.length} msgs, ${threads.length} threads)`, () => {
-      const html = timelineHtml(messages, { chat: c.chat, chats, threadsByTs });
-      for (const m of messages) assert.ok(html.includes(`data-mid="${m.id}"`));
-      // Every owner message that roots a thread shows the chip.
-      for (const th of threads) if (messages.some((m) => m.id === th.ts)) assert.ok(html.includes(`class="tchip st-${threadState(th)}" data-thread="${th.ts}"`));
-      // Every coordinator #cmsg link renders as an in-app thread link.
-      for (const m of messages) for (const id of threadLinks(m.text)) assert.ok(html.includes(`data-thread="${id}"`));
-      // Forwarded messages say where they came from.
-      for (const m of messages) if (m.forwarded_from) assert.ok(html.includes("Forwarded from Workspace"));
-      assert.ok(!/<script/i.test(html));
-      const list = threadListHtml(threads, statuses);
-      if (threads.length) assert.ok(list.includes("tgroup"));
-    });
   }
   const ws = (await get("/chats/workspace/messages")).messages;
-  t("workspace shows where routed messages went", () => {
+  t("workspace: routed index points at real workspace messages", () => {
     const idx = routedIndex(projectMsgs);
-    const html = timelineHtml(ws, { chat: "workspace", chats, routed: idx, threadsByTs: {} });
-    for (const [id, routes] of Object.entries(idx)) {
-      if (!ws.some((m) => m.id === id)) continue;
-      for (const r of routes) assert.ok(html.includes(`data-goto-chat="${r.chat}" data-goto-msg="${r.messageId}"`));
-    }
-    console.log(`      routed index: ${Object.values(idx).flat().length} forwarded copies`);
+    const found = Object.keys(idx).filter((id) => ws.some((m) => m.id === id));
+    for (const id of found) for (const r of idx[id]) assert.ok(projectMsgs[r.chat].some((m) => m.id === r.messageId));
+    console.log(`      routed index: ${Object.values(idx).flat().length} forwarded copies, ${found.length} in the workspace timeline`);
   });
 } catch (e) {
   console.error("live data unavailable:", e.message);

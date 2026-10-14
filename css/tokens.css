@@ -9,20 +9,22 @@
 @font-face{font-family:"Geist";font-style:normal;font-weight:100 900;font-display:swap;src:url("../fonts/geist/Geist-Variable.woff2") format("woff2")}
 @font-face{font-family:"Geist Mono";font-style:normal;font-weight:100 900;font-display:swap;src:url("../fonts/geist/GeistMono-Variable.woff2") format("woff2")}
 
-/* Dark: chip --ui-canvas #1E1E1E is the page; --ui-panel #262626 the chrome. */
+/* Dark: a deep canvas (#141414) with chip-derived greys stepped up for panels and states. */
 :root{
   color-scheme:dark;
-  --bg:#1E1E1E; --bg-2:#262626; --bg-3:#313131; --bg-4:#393939;     /* canvas, panel, hover (text 6%), pressed (text 10%) */
-  --bg-head:#2D2D2D;                                                  /* chip --ui-header: header bands, tab strips */
-  --line:#3E3E3E; --line-soft:#2E2E2E; --line-hover:#636363;          /* border, border/canvas, border-strong */
+  /* Surfaces: a deeper canvas (darkened 2026-10-13); each step keeps the same
+     relative lift so panels, hover and pressed still read as layers. */
+  --bg:#141414; --bg-2:#1B1B1B; --bg-3:#252525; --bg-4:#2E2E2E;     /* canvas, panel, hover, pressed */
+  --bg-head:#202020;                                                  /* header bands, tab strips */
+  --line:#323232; --line-soft:#232323; --line-hover:#565656;          /* border, border/canvas, border-strong */
   --ink:#E1E1E1; --ink-2:#C1C1C1; --ink-3:#909090; --ink-4:#878787;   /* text, text/muted, muted, quiet (4.6:1) */
-  --accent:#83D63A; --accent-fill:#83D63A; --accent-ink:#1E1E1E; --accent-hover:#96DC58;
-  --accent-rgb:131,214,58; --bg-rgb:30,30,30; --bg-2-rgb:38,38,38;
+  --accent:#83D63A; --accent-fill:#83D63A; --accent-ink:#141414; --accent-hover:#96DC58;
+  --accent-rgb:131,214,58; --bg-rgb:20,20,20; --bg-2-rgb:27,27,27;
   --err:#D7373F; --err-ink:#E68388;
   --warn:#F5A623; --info:#75ADF1; --violet:#BF8DFF;
   --mark-x:#E1E1E1; --mark-o:#83D63A;
-  --bubble:#313131; --bubble-line:#3E3E3E;
-  --code-bg:#262626;
+  --bubble:#232323; --bubble-line:#303030;
+  --code-bg:#1B1B1B;
   --shadow-sm:0 1px 2px rgba(0,0,0,.35),0 1px 1px rgba(0,0,0,.2);
   --shadow-md:0 4px 14px rgba(0,0,0,.35),0 1px 3px rgba(0,0,0,.3);
   --shadow-lg:0 8px 24px rgba(0,0,0,.5),0 2px 6px rgba(0,0,0,.3);

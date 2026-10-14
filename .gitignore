@@ -1,7 +1,5 @@
-# Working documents (kept local, not shared)
+# Working documents: research, reports, handoffs (kept local, not shared)
 docs/
-research_notes/
-reports/
 
 # Runtime
 .server.log

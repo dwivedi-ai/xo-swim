@@ -2,141 +2,96 @@
 
 **Codename for XO Space Cowork: Smart Work & Ideas Management.**
 
-A web UI for the XO Space **projects chat** backend (`/api/projects-chat/*`):
-a home page of what needs you across every project, the workspace and project
-coordinators, their threads (each with its own agent, branch and checklist),
-and live updates.
+A web UI for the XO Space **projects chat** backend (`/api/projects-chat/*`). It is built around one idea: protect the person's attention. The screen shows what is worth your time and the next action. Everything that only needs an agent stays quiet.
 
-Plain HTML, CSS and vanilla JS ES modules: no build step, no npm, no CDN.
-Type is Geist (Geist Mono for code); colours follow XO Space's palette with
-XO green as the accent. Interaction follows a few rules: every wait is
-acknowledged at once, nothing jumps, typed text is never lost, and what waits
-on a person is loud while what waits on an agent is quiet.
+- **Home**: what is worth your time across every project, ranked. Small asks that block nobody wait quietly and say why. Then "Handled": what is running and what can wait.
+- **Needs you** panel: one decision at a time, with what it unblocks, the evidence and Details. On phones it is a bottom sheet.
+- **Workspace**: your coordinator across all projects. Messages show where they were routed.
+- **Projects**: a title, one sentence, the Now shelf of threads in progress, and All threads (searchable, finished ones folded).
+- **Threads**: each has its own agent, branch and checklist. The thread's own decision sits above the composer.
+- **Composer**: `@project` aims a message at a project. The model chip shows the routing in effect.
+- Light and dark themes. Geist type and the XO palette, with XO green as the accent. Motion honours reduced-motion settings.
+
+Plain HTML, CSS and vanilla ES modules: no build step, no npm, no CDN.
 
 ## Start
 
 ```sh
 python3 serve.py                 # foreground, http://127.0.0.1:5180
-./start.sh                       # same
 ./start.sh --background          # detached (pid in .server.pid, log in .server.log)
-./start.sh --status
-./start.sh --stop
+./start.sh --status | --stop
 ```
 
-Environment:
+| var      | default                 | meaning                       |
+|----------|-------------------------|-------------------------------|
+| `PORT`   | `5180`                  | port to listen on             |
+| `XO_API` | `http://127.0.0.1:5002` | the XO Space API to proxy to  |
+| `HOST`   | `127.0.0.1`             | bind address                  |
 
-| var      | default                  | meaning                         |
-|----------|--------------------------|---------------------------------|
-| `PORT`   | `5180`                   | port to listen on (127.0.0.1)   |
-| `XO_API` | `http://127.0.0.1:5002`  | the XO Space API to proxy to    |
-| `HOST`   | `127.0.0.1`              | bind address                    |
+`serve.py` (standard library only) serves the files and reverse-proxies `/api/*` to `XO_API`:
+- It applies its own same-origin check to writes, so cross-site writes get a 403.
+- It drops the browser's `Origin`, `Referer` and `Sec-Fetch-*` headers before forwarding.
+- It relays Server-Sent Events unbuffered.
 
-Then open <http://127.0.0.1:5180/> (or your editor's forwarded URL for port 5180).
+## Live and Demo
 
-### Why a server
+| Mode | How | What it does |
+|---|---|---|
+| **Live** (default) | `/` | Reads and writes your real XO workspace. **Sending a message starts real agents.** |
+| **Demo** | `/?mode=demo`, or the badge at bottom-left | A simulated, busy workspace that runs in the browser. Nothing is sent anywhere. |
 
-The XO API refuses cross-origin browser writes, so the page must not call it
-directly. `serve.py` (Python standard library only) serves the static files
-**and** reverse-proxies `/api/*` to `XO_API`:
+The choice is remembered per browser (`localStorage` `xo-mode`). Demo-only features never run in Live: the end-of-day seal and morning recap, "Found while working", rules, and the Stop button. Demo also accepts `?at=day|evening|night|morning` and `?away=N` to place the story at a moment of the day.
 
-- forwards method, body and content type; drops the browser's `Origin`,
-  `Referer` and `Sec-Fetch-*` headers (it acts as a server-side proxy);
-- applies its own same-origin check to writes first, so another website
-  cannot use the proxy to post on your behalf (cross-site writes get 403);
-- relays Server-Sent Events unbuffered (flush per chunk, `TCP_NODELAY`);
-- threaded, binds 127.0.0.1.
+A standalone copy locked to Demo, with no backend at all, lives at `/home/coder/xo-swim-demo` (`python3 serve_demo.py`, port 5210).
 
-## What the UI does
+### How Live talks to the backend
 
-- **Home** (the default, `#/home`): what needs you (questions and approvals,
-  loud), what is failing, what agents are working on (quiet), what is ready
-  for review, across every project. Below that, your projects, and a box to
-  ask the workspace (it sends to the workspace chat).
-- **Create XO Project** (sidebar and home): name, folder and an optional
-  description. It reads the projects root from `GET /api/config/workspace`
-  and scaffolds with `POST /api/files/mkdir` (`scaffold: true`). A taken
-  folder (409) is explained inline.
-- **Fresh start**: a chat with history opens looking new; history is one
-  scroll above ("N earlier messages"). When you send, your message settles at
-  the top of the view with room for the reply, so nothing jumps as it grows.
+- **Status:** `GET /status` at boot, every 20 s, and every 8 s while failing. An unreachable backend, the router being off or an unsupported backend shows as one calm line, and Send is disabled with the reason.
+- **Threads:** every project's threads every 15 s, one poll at a time. A project that fails keeps its last good data. Thread details load in parallel, six at a time.
+- **Conversations:** `GET /chats/{chat}/messages?limit=40`, plus an SSE `ChatStream` for the open chat (the Workspace while on Home). `message`, `thread` and `heartbeat` events are handled, with backoff and a polling fallback. Scrolling up grows history 40 → 80 → 160… (up to 1,000).
+- **Sending:** `POST /chats/{chat}/messages {text, thread_ts?}`. Your message appears at once and is replaced in place by the server's row. "Replying" follows the coordinator's real heartbeat. Errors use plain titles, with Retry and Edit.
+- **Open thread:** polled every 4 s while its agent is busy and every 15 s otherwise. "Working" means the session is actually busy. An idle one reads "Idle".
+- **Asks:** a thread waiting on you is titled from its agent's last message. You answer in words, as a thread reply.
 
-- **Sidebar** (collapsible; a drawer on phones): Workspace first, then each
-  project with its open-thread count. `Ctrl/⌘ K` focuses the chat
-  switcher (arrow keys + Enter to pick).
-- **Title bar**: breadcrumb (Projects chat / chat) with a kind tag, the
-  Threads toggle (count turns amber when something waits on you) and the
-  theme toggle (follows the OS until you pick one).
-- **Status bar** (bottom): connection (Live / Reconnecting / Polling /
-  Offline, by shape and colour), router, agent, modes, model, and the keys.
-  Quiet when healthy; it only takes colour when something is wrong.
-- **Conversation**: owner messages as right-aligned bubbles, coordinator
-  replies as unboxed prose with an avatar, day separators, copy buttons.
-  "Forwarded from Workspace" on forwarded messages; in the Workspace, owner
-  messages that were routed show **Routed to → project** chips (click to jump
-  to the forwarded copy). An owner message that rooted a thread shows a
-  **Thread: title · state →** chip.
-- **Sending is instant and forgiving**: your message appears in the same frame
-  (*Sending*), the composer clears, and a failure keeps the message in place
-  with **Retry** and **Edit**. Drafts are saved per chat and per thread
-  (localStorage), so switching chats or reloading never loses typed text.
-- **Live replies are appended**, never re-rendered: text you are reading or
-  selecting stays put. New replies are announced to screen readers, and the
-  tab title counts replies that arrived while the tab was hidden.
-- **Honest waits**: the working indicator shows elapsed time, and after 15 s
-  says you can keep working (replies arrive live).
-- **Where things stand**: when the Threads dock is closed, a strip over the
-  conversation shows what waits on you first (diamond), then what agents are
-  doing. Dismissing it holds until something changes.
-- **Composer**: auto-growing, Enter to send, Shift+Enter for a newline,
-  disabled with the reason when the router is off / the backend is
-  unsupported / the API is unreachable. A "Coordinator is working…" indicator
-  shows while the heartbeat says busy, and right after sending until a reply
-  arrives. Smooth autoscroll with a "jump to latest / N new messages" pill.
-  Empty chats show suggested prompts (clicking one fills the composer; it
-  never sends by itself).
-- **Threads panel** (right; a bottom sheet on narrow screens; `Esc` closes):
-  cards grouped *Waiting on you*, *Working*, *Ready for review*, *Failed*,
-  *Resolved* (empty groups hidden), each with title, checklist progress
-  (✓ done / total), headline / latest update or what it needs from you,
-  branch and relative time.
-- **Thread view**: opened from a card, a thread chip, or a coordinator link
-  like `[Title](#cmsg_…)`. Title, state badge, branch, turns, last error,
-  "needs you" callout, latest card update, the live checklist (✱ in progress,
-  ○ to do, ✓ done), the root message and the thread's messages, and its own
-  composer (posts with `thread_ts`, straight to the thread's agent).
-  The URL hash (`#/c/<chat>/t/<ts>`) links to a chat or thread.
-- **Design principles** (from the Baby research): the work is the hero and
-  status stays quiet; every wait is acknowledged at once; nothing jumps;
-  typed text is never lost; feedback appears where the eye already is (copy
-  shows a check, not a toast); motion is short and honours reduced motion.
-- **Markdown**: safe subset (paragraphs, headings, lists, quotes, bold/italic,
-  inline code, fenced code with a copy button, links). Message text is never
-  inserted as HTML; links are allowed only to `http(s)` (new tab) and in-app
-  `#cmsg_…` thread anchors.
-- **Live updates**: one `EventSource` per open chat (`message`, `thread`,
-  `heartbeat` events), deduped by message id, reconnecting with backoff and
-  falling back to polling every 4s after repeated errors (retrying SSE every
-  30s). The open thread refreshes on its `thread` events and polls every 4s
-  while its agent is busy.
+**The backend does not have these yet**, so the UI hides or degrades them (see `docs/requirements.md`):
+- approvals with an approve/deny route (R2);
+- stopping a running agent;
+- resolving a thread from the UI (R1);
+- per-chat model choice (R6; the chip is read-only);
+- a `before` history cursor (R5).
 
-## Files
+## Code
 
-```
-serve.py            static server + /api reverse proxy (stdlib)
-start.sh            start / --background / --stop / --status
-index.html          page shell
-css/tokens.css      XO Space tokens, fonts, light/dark
-css/app.css         layout and components
-js/app.js           state, events, rendering into the page
-js/api.js           fetch client for /api/projects-chat
-js/stream.js        SSE with backoff and polling fallback
-js/views.js         HTML builders (escaped)
-js/markdown.js      safe markdown renderer
-js/model.js         merging, thread grouping, checklist parsing
-js/util.js          escaping and time helpers
-fonts/geist/        Geist, Geist Mono variable (SIL OFL 1.1)
-tests/logic.test.mjs  node tests: markdown safety, grouping, checklist,
-                      and rendering of the live chats (needs the server)
+| File | Role |
+|---|---|
+| `index.html` | the shell: sidebar, Home, conversation, dock, panel, sheets |
+| `css/tokens.css` | palette, type scale, Geist faces |
+| `css/base.css`, `css/app.css`, `css/mode.css` | reset, the UI, and the Demo/Live badge |
+| `js/app.js` | views, rendering, navigation, composer, sending |
+| `js/world.js` | the data source: `liveSource` (real API) and `demoSource` (simulated) |
+| `js/api.js`, `js/stream.js` | HTTP client and SSE `ChatStream` |
+| `js/model.js`, `js/timeline.js`, `js/markdown.js`, `js/util.js` | pure helpers: thread state, checklists, message rows and dedupe, asks, `@target`, safe markdown |
+| `js/decide.js`, `js/kit.js`, `js/pacing.js` | decisions, the decision kit and commit window, and pacing (what speaks up and what waits) |
+| `js/intel.js` | the model and depth chip |
+| `js/night.js`, `js/finds.js`, `js/rules.js`, `js/content.js` | demo-only stories and their content |
+| `js/ui.js`, `js/mode.js` | icons and motion helpers, and the Demo/Live badge |
+
+## Tests
+
+```sh
+node tests/logic.test.mjs        # pure modules; the live-data part only sends GETs through :5180
 ```
 
-Run the tests with `node tests/logic.test.mjs` while the server is up.
+The browser suites (Playwright) live outside the repo:
+- a 105-check suite for Demo;
+- a 59-check suite for Live, which mocks or blocks every non-GET request;
+- a no-writes-on-load check.
+
+**Never let a test send a non-GET request to a live backend.**
+
+## History
+
+- The classic UI this replaced is tagged `classic-ui` in git.
+- The design research, the 17 concepts this UI converged from and the full session handoff are kept locally, outside git:
+  - `docs/` (start with `docs/README.md`);
+  - `/home/coder/xo-archive/2026-10-14/`.

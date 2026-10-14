@@ -1,0 +1,16 @@
+/* Shared base for every ux-test: XO tokens + Geist, a reset, and the
+   reduced-motion contract. Each concept's own style.css is only its idea. */
+@import url("./tokens.css");
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:400 var(--fs-md)/var(--lh-ui) var(--sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input,textarea{font:inherit;color:inherit}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid rgba(var(--accent-rgb),.75);outline-offset:2px;border-radius:6px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+kbd{font:500 11px/1 var(--sans);padding:2px 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}

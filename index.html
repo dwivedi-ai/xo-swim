@@ -1,161 +1,183 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>XO Space Cowork</title>
-<meta name="description" content="XO Space Cowork: what needs you across your projects, the workspace and project coordinators, threads and live updates.">
-<meta name="color-scheme" content="dark light">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='20 155 460 190'%3E%3Cg fill='none' stroke-width='34'%3E%3Cpolyline stroke='%23e1e1e1' points='36.99 165.84 118.47 247.31 31.16 334.61'/%3E%3Cpolyline stroke='%23e1e1e1' points='244.91 165.84 163.44 247.31 250.74 334.61'/%3E%3Cpolyline stroke='%2383d63a' points='328.12 165.06 246.65 246.53 333.95 333.84'/%3E%3Cpolyline stroke='%2383d63a' points='380.51 165.06 461.99 246.53 374.68 333.84'/%3E%3C/g%3E%3C/svg%3E">
-<link rel="preload" href="fonts/geist/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<script>
-  // Apply the saved theme before first paint (no flash).
-  try { const t = localStorage.getItem("xo-chat-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
-</script>
-<link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/app.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("cv-theme")==="light"?"light":"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+  <title>XO Space Cowork</title>
+  <link rel="stylesheet" href="./css/base.css">
+  <link rel="stylesheet" href="./css/app.css">
+  <link rel="stylesheet" href="./css/mode.css">
 </head>
 <body>
-<div class="app" id="app">
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar" aria-label="Navigation">
-    <div class="side-top">
-      <div class="brand"><span class="brand-mark" id="brand-mark"></span><b>Space</b><span>Cowork</span></div>
-      <button type="button" class="icon-btn" id="sidebar-close" title="Hide sidebar" aria-label="Hide sidebar"></button>
-    </div>
-    <button type="button" class="create-btn" id="create-btn" data-create-project><span id="create-ic"></span>Create XO Project</button>
-    <label class="side-search">
-      <span class="ss-ic" id="search-ic"></span>
-      <input id="chat-filter" type="search" placeholder="Jump to chat" autocomplete="off" spellcheck="false" aria-label="Filter chats">
-      <kbd id="kbd-hint">⌘K</kbd>
-    </label>
-    <nav class="chan-list" aria-label="Chats">
-      <button type="button" class="chan chan-home" id="nav-home" data-home><span class="chan-ic" id="home-ic"></span><span class="chan-name">Home</span><span class="n n-wait" id="home-count" hidden></span></button>
-      <div id="chat-list"></div>
-    </nav>
-  </aside>
-  <div class="scrim" id="side-scrim" hidden></div>
+  <div class="app" id="app">
+    <!-- Sidebar: Home, Workspace, then projects as button-like rows. Text only when a project needs you. -->
+    <aside class="side" id="side" aria-label="Navigation">
+      <div class="side-top">
+        <p class="brand"><span class="brand-mark" id="brand-mark"></span><b>Space</b><span>Cowork</span></p>
+        <button type="button" class="theme" id="theme" role="switch" aria-checked="false" aria-label="Light mode"></button>
+        <button type="button" class="side-x" id="side-x" aria-label="Close menu"></button>
+      </div>
+      <nav class="nav" aria-label="Main">
+        <button type="button" class="nrow" data-go="home" id="nv-home"><span class="nr-ic" id="ic-home"></span><span class="nr-name">Home</span><span class="nr-n" id="home-n"></span></button>
+        <button type="button" class="nrow" data-go="ws" id="nv-ws"><span class="nr-ic nr-xo" id="ic-ws"></span><span class="nr-name">Workspace</span></button>
+      </nav>
+      <div class="side-label"><span id="projects-label">Projects</span><button type="button" class="side-add" id="side-add" aria-label="Create XO Project" title="Create XO Project"></button></div>
+      <nav class="projects" id="projects" aria-labelledby="projects-label"></nav>
+      <div class="side-foot"><button type="button" class="help" id="help-side" aria-label="Keyboard shortcuts" title="Keys (?)">?</button></div>
+    </aside>
+    <div class="side-scrim" id="side-scrim" hidden></div>
 
-  <!-- Main -->
-  <main class="main" id="main">
-    <header class="topbar">
-      <button type="button" class="icon-btn" id="sidebar-open" title="Show sidebar" aria-label="Show sidebar"></button>
-      <div class="title">
-        <span class="title-ic" id="title-ic"></span>
-        <h1 id="chat-title">Home</h1>
-      </div>
-      <div class="status" id="status"></div>
-      <div class="top-actions">
-        <button type="button" class="ghost-btn" id="threads-toggle" aria-controls="panel" aria-expanded="false">
-          <span id="threads-ic"></span><span class="tt-label">Threads</span><span class="count" id="threads-count" hidden></span>
-        </button>
-        <button type="button" class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle light/dark theme"></button>
-      </div>
-    </header>
+    <main class="main" id="main">
+      <header class="phonebar" id="phonebar">
+        <button type="button" class="pb-menu" id="pb-menu" aria-label="Open menu" aria-controls="side" aria-expanded="false"></button>
+        <span class="pb-t" id="pb-t"></span>
+        <button type="button" class="help" id="help-phone" aria-label="Keyboard shortcuts" title="Keys (?)">?</button>
+      </header>
 
-    <!-- Home: what needs you, what is working, what is ready -->
-    <section class="view home" id="home" aria-label="Home" hidden>
-      <div class="home-scroll" id="home-scroll">
-        <div class="home-col">
-          <div id="home-body"></div>
-        </div>
-      </div>
-      <div class="composer-wrap">
-        <form class="composer" id="home-composer" autocomplete="off">
-          <textarea id="home-input" rows="1" placeholder="Ask the workspace anything…" aria-label="Ask the workspace"></textarea>
-          <div class="composer-row">
-            <span class="composer-note" id="home-note"></span>
-            <button type="submit" class="send" id="home-send" aria-label="Send to the workspace" disabled></button>
+      <!-- Home: what's worth your time, then the end of the day -->
+      <section class="home" id="home" aria-labelledby="home-h" tabindex="-1"></section>
+
+      <!-- A conversation: the Workspace, a project, or a thread -->
+      <section class="conv" id="conv" hidden>
+        <header class="top" id="top">
+          <button type="button" class="top-back" id="top-back" hidden></button>
+          <div class="top-who" id="top-who"></div>
+        </header>
+        <div class="now-wrap" id="now-wrap" hidden></div>
+        <div class="thead" id="thead" hidden></div>
+        <div class="scroller" id="scroller" tabindex="-1">
+          <div class="column" id="column">
+            <div class="ws-head" id="ws-head" hidden></div>
+            <div class="msgs" id="msgs" role="log" aria-live="off" aria-label="Messages"></div>
+            <div class="typing-slot" id="typing"></div>
           </div>
-        </form>
-      </div>
-    </section>
+        </div>
+        <button type="button" class="new-below" id="new-below" hidden>New messages <span id="nb-ic"></span></button>
+      </section>
 
-    <!-- A chat -->
-    <section class="view chatview" id="chatview" aria-label="Conversation" hidden>
-      <div class="scroller" id="scroller">
-        <div class="column history-top" id="history-top" hidden></div>
-        <div class="column" id="timeline" role="log" aria-label="Conversation"></div>
-        <div class="column typing-wrap" id="typing" hidden></div>
-        <div class="column fresh" id="fresh" hidden></div>
-      </div>
-
-      <button type="button" class="jump" id="jump" hidden><span id="jump-ic"></span><span id="jump-label">Jump to latest</span></button>
-
-      <div class="composer-wrap">
-        <div class="waiting-strip" id="waiting-strip" hidden></div>
+      <!-- The dock: one calm labelled line, the thread's own decision (in a thread), the composer on a glass bar -->
+      <div class="dock" id="dock">
+        <div class="tdock" id="tdock"></div>
+        <div class="cbar">
+        <div class="herald" id="herald" aria-live="polite"></div>
         <form class="composer" id="composer" autocomplete="off">
-          <textarea id="input" rows="1" placeholder="Message the coordinator…" aria-label="Message"></textarea>
+          <label class="sr-only" for="say" id="say-label">Message</label>
+          <div class="composer-field">
+            <textarea id="say" rows="1" placeholder="Message" aria-autocomplete="list" aria-controls="at-list" aria-expanded="false" spellcheck="true"></textarea>
+            <ul id="at-list" class="at-list" role="listbox" aria-label="Projects" hidden></ul>
+          </div>
           <div class="composer-row">
-            <span class="composer-note" id="composer-note"></span>
-            <span class="draft-note" id="draft-note"></span>
-            <button type="submit" class="send" id="send" aria-label="Send message" disabled></button>
+            <button type="button" class="target" id="target" title="Aim at a project (@)"></button>
+            <button type="button" class="iq" id="iq" aria-haspopup="dialog" aria-expanded="false" aria-controls="iq-pop"></button>
+            <button type="submit" class="send" id="send" aria-label="Send" title="Send (Enter)" disabled></button>
           </div>
         </form>
-        <div class="composer-hint" aria-hidden="true"><span><kbd>Enter</kbd> send</span><span><kbd>Shift</kbd><kbd>Enter</kbd> new line</span></div>
-      </div>
-    </section>
-  </main>
-
-  <!-- Threads panel: list or a single thread -->
-  <aside class="panel" id="panel" aria-label="Threads" hidden>
-    <div class="panel-list" id="panel-list">
-      <header class="panel-head">
-        <h2>Threads <small id="threads-total"></small></h2>
-        <button type="button" class="icon-btn" id="panel-close" title="Close (Esc)" aria-label="Close threads"></button>
-      </header>
-      <div class="panel-body" id="thread-list"></div>
-    </div>
-    <div class="panel-detail" id="panel-detail" hidden>
-      <header class="panel-head">
-        <button type="button" class="icon-btn" id="detail-back" title="All threads" aria-label="Back to all threads"></button>
-        <span class="crumb" id="detail-crumb">Thread</span>
-        <button type="button" class="icon-btn" id="detail-close" title="Close (Esc)" aria-label="Close thread"></button>
-      </header>
-      <div class="panel-body" id="detail-scroll">
-        <div id="detail-head"></div>
-        <div class="td-msgs" id="detail-msgs"></div>
-        <div id="detail-typing" hidden></div>
-      </div>
-      <form class="composer composer-sm" id="thread-composer" autocomplete="off">
-        <textarea id="thread-input" rows="1" placeholder="Reply in thread…" aria-label="Reply in thread"></textarea>
-        <div class="composer-row">
-          <span class="composer-note" id="thread-note"></span>
-          <button type="submit" class="send" id="thread-send" aria-label="Send to thread" disabled></button>
         </div>
-      </form>
+      </div>
+
+      <!-- Global decisions: beside the conversation, sized to its content -->
+      <section class="panel" id="panel" aria-labelledby="pn-h" hidden>
+        <header class="pn-top">
+          <div class="pn-title"><h2 id="pn-h">Needs you</h2><p class="pn-count" id="pn-count" aria-live="polite"></p></div>
+          <button type="button" class="pn-x" id="pn-x" aria-label="Close decisions" title="Close (Esc)"></button>
+        </header>
+        <div class="pn-rail" id="pn-rail" aria-hidden="true"></div>
+        <div class="pn-stage" id="pn-stage"></div>
+        <footer class="pn-foot" id="pn-foot"></footer>
+      </section>
+
+      <div class="toast-wrap"><div class="toast" id="toast" role="status" hidden></div></div>
+    </main>
+  </div>
+
+  <!-- Create XO Project -->
+  <dialog class="dlg" id="create-dlg" aria-labelledby="create-title">
+    <form id="create-form" method="dialog" autocomplete="off" novalidate>
+      <header class="dlg-head">
+        <span class="dlg-ic" id="dlg-ic"></span>
+        <div><h2 id="create-title">Create XO Project</h2><p>Its own coordinator, plan and memory.</p></div>
+      </header>
+      <label class="field">
+        <span>Project name</span>
+        <input id="cp-name" name="name" required maxlength="80" placeholder="e.g. Billing API">
+        <small class="cp-where" id="cp-where"></small>
+      </label>
+      <label class="field">
+        <span>What is it for? <em>optional</em></span>
+        <textarea id="cp-desc" name="description" rows="3" maxlength="600" placeholder="One or two sentences for the project brief."></textarea>
+      </label>
+      <p class="dlg-err" id="cp-err" role="alert" hidden></p>
+      <footer class="dlg-foot">
+        <button type="button" class="btn" id="cp-cancel">Cancel</button>
+        <button type="submit" class="btn btn-pri" id="cp-submit">Create project</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- All threads in a project: searchable, filtered; finished ones fold into one line -->
+  <div class="sheet" id="all" role="dialog" aria-modal="true" aria-labelledby="all-h" hidden>
+    <div class="sheet-card all-card">
+      <header class="sheet-h"><h2 id="all-h">All threads</h2><button type="button" class="x" data-close aria-label="Close"></button></header>
+      <div class="all-tools">
+        <div class="all-q"><span id="all-ic"></span><input id="all-q" placeholder="Search threads" autocomplete="off" aria-label="Search threads"></div>
+        <div class="all-f" id="all-f" role="radiogroup" aria-label="Show"></div>
+      </div>
+      <div class="all-list" id="all-list"></div>
     </div>
-  </aside>
-  <div class="scrim scrim-panel" id="panel-scrim" hidden></div>
-</div>
+  </div>
 
-<!-- Create XO Project -->
-<dialog class="dlg" id="create-dlg" aria-labelledby="create-title">
-  <form id="create-form" method="dialog" autocomplete="off" novalidate>
-    <header class="dlg-head">
-      <span class="dlg-ic" id="dlg-ic"></span>
-      <div><h2 id="create-title">Create XO Project</h2><p>A new project with its own coordinator, plan and memory.</p></div>
-    </header>
-    <label class="field">
-      <span>Project name</span>
-      <input id="cp-name" name="name" required maxlength="80" placeholder="e.g. Billing API">
-      <small class="cp-where" id="cp-where"></small>
-    </label>
-    <label class="field">
-      <span>What is it for? <em>optional</em></span>
-      <textarea id="cp-desc" name="description" rows="3" maxlength="600" placeholder="One or two sentences. The coordinator uses this to write the project brief."></textarea>
-    </label>
-    <p class="dlg-err" id="cp-err" role="alert" hidden></p>
-    <footer class="dlg-foot">
-      <button type="button" class="btn" id="cp-cancel">Cancel</button>
-      <button type="submit" class="btn btn-pri" id="cp-submit">Create project</button>
-    </footer>
-  </form>
-</dialog>
+  <!-- Intelligence for this conversation: an anchored popover (a bottom sheet on a phone) -->
+  <div class="iq-pop" id="iq-pop" role="dialog" aria-labelledby="iq-hh" tabindex="-1" hidden></div>
 
-<div class="toasts" id="toasts" aria-live="assertive"></div>
-<div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+  <!-- Jump -->
+  <div class="sheet" id="jump" role="dialog" aria-modal="true" aria-label="Jump to" hidden>
+    <div class="sheet-card jump-card">
+      <div class="jump-field"><span id="jump-ic"></span><input id="jump-q" placeholder="Jump to Home, the Workspace, a project or a thread" aria-controls="jump-list" autocomplete="off"></div>
+      <ul class="jump-list" id="jump-list" role="listbox" aria-label="Places"></ul>
+    </div>
+  </div>
 
-<script type="module" src="js/app.js"></script>
+  <!-- The only place shortcuts are shown -->
+  <div class="sheet" id="keys" role="dialog" aria-modal="true" aria-labelledby="keys-h" hidden>
+    <div class="sheet-card keys-card">
+      <header class="sheet-h"><h2 id="keys-h">Keys</h2><button type="button" class="x" data-close aria-label="Close"></button></header>
+      <div class="keys-cols">
+        <dl class="keys">
+          <dt class="kh">Anywhere</dt><dd></dd>
+          <dt><kbd>N</kbd></dt><dd>Take the next move</dd>
+          <dt><kbd>H</kbd> · <kbd>W</kbd></dt><dd>Home · the Workspace</dd>
+          <dt><kbd>/</kbd></dt><dd>Write · <kbd>@</kbd> aims it at a project</dd>
+          <dt><kbd>⌘K</kbd> <kbd>Ctrl K</kbd></dt><dd>Jump to any project or thread</dd>
+          <dt><kbd>T</kbd></dt><dd>All threads in this project</dd>
+          <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous / next thread</dd>
+          <dt><kbd>C</kbd></dt><dd>Show or pin a thread's checklist</dd>
+          <dt><kbd>M</kbd> · <kbd>⌘.</kbd></dt><dd>Intelligence for this conversation (M in an empty composer)</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Back, exactly where you were</dd>
+          <dt><kbd>U</kbd></dt><dd>Undo the last decision (3 s)</dd>
+        </dl>
+        <dl class="keys">
+          <dt class="kh">On a decision</dt><dd></dd>
+          <dt><kbd>A</kbd></dt><dd>Allow (routine, notable)</dd>
+          <dt>hold <kbd>↵</kbd></dt><dd>Allow a destructive ask (1.2 s)</dd>
+          <dt><kbd>D</kbd></dt><dd>Send back, with a note</dd>
+          <dt><kbd>1</kbd>–<kbd>9</kbd> · <kbd>R</kbd></dt><dd>Pick an answer · reply in words</dd>
+          <dt><kbd>E</kbd></dt><dd>Details, in place</dd>
+          <dt><kbd>O</kbd></dt><dd>Open the thread beside the panel</dd>
+          <dt><kbd>J</kbd> <kbd>K</kbd></dt><dd>Skip ahead / back; nothing is forced first</dd>
+          <dt><kbd>L</kbd> · <kbd>T</kbd></dt><dd>Later today · make it a rule</dd>
+          <dt><kbd>⇧A</kbd></dt><dd>Allow all routine together</dd>
+          <dt class="kh">In the intelligence popover</dt><dd></dd>
+          <dt><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>←</kbd> <kbd>→</kbd></dt><dd>Model · depth</dd>
+          <dt><kbd>↵</kbd> · <kbd>A</kbd></dt><dd>Pin it · back to Auto</dd>
+        </dl>
+      </div>
+      <p class="keys-foot"><button type="button" class="sound-tog" id="sound-tog" aria-pressed="false"></button><span>Soft sounds on Allow, Send back and “That's everything”. Off unless you turn them on.</span></p>
+    </div>
+  </div>
+
+  <div id="live" class="sr-only" aria-live="polite"></div>
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>
