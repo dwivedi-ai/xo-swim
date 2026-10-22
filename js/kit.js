@@ -14,7 +14,7 @@
 //   • every decision waits 3 s in a commit window you can Undo;
 //   • Teach is an explicit sentence the person reads before it is sent;
 //   • a waiting thread with no ask still gets one (synthetic), so the
-//     needs-you channel is complete in live mode.
+//     needs-you channel is complete.
 // ─────────────────────────────────────────────────────────────────────────────
 import { WAITING } from "./world.js";
 import { itemBody } from "./review.js";

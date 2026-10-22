@@ -1,4 +1,4 @@
-// Live mode: pure helpers between storm's rows (UI-reference §3) and the UI's message and ask
+// Pure helpers between storm's rows (UI-reference §3) and the UI's message and ask
 // shapes. No DOM, no fetch: tested from Node (tests/logic.test.mjs).
 
 

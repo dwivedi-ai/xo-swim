@@ -35,18 +35,9 @@ python3 serve.py                 # foreground, http://127.0.0.1:5180
 - It drops the browser's `Origin`, `Referer` and `Sec-Fetch-*` headers before forwarding.
 - It relays Server-Sent Events unbuffered.
 
-## Live and Demo
+## The backend
 
-| Mode | How | What it does |
-|---|---|---|
-| **Live** (default) | `/` | Reads and writes your real XO workspace. **Sending a message starts real agents.** |
-| **Demo** | `/?mode=demo`, or the badge at bottom-left | A simulated, busy workspace that runs in the browser. Nothing is sent anywhere. |
-
-The choice is remembered per browser (`localStorage` `xo-mode`). Demo-only features never run in Live: the end-of-day seal and morning recap, "Found while working", rules, and the Stop button. Demo also accepts `?at=day|evening|night|morning` and `?away=N` to place the story at a moment of the day.
-
-A standalone copy locked to Demo, with no backend at all, lives at `/home/coder/xo-swim-demo` (`python3 serve_demo.py`, port 5210).
-
-### How Live talks to the backend
+The UI reads and writes your real XO workspace. **Sending a message starts real agents.**
 
 - **Status:** `GET /status` at boot, every 20 s, and every 8 s while failing. An unreachable backend, the router being off or an unsupported backend shows as one calm line, and Send is disabled with the reason.
 - **Threads:** every project's threads every 15 s, one poll at a time. A project that fails keeps its last good data. Thread details load in parallel, six at a time.
@@ -68,15 +59,15 @@ A standalone copy locked to Demo, with no backend at all, lives at `/home/coder/
 |---|---|
 | `index.html` | the shell: sidebar, Home, conversation, dock, panel, sheets |
 | `css/tokens.css` | palette, type scale, Geist faces |
-| `css/base.css`, `css/app.css`, `css/mode.css` | reset, the UI, and the Demo/Live badge |
+| `css/base.css`, `css/app.css` | reset and the UI |
 | `js/app.js` | views, rendering, navigation, composer, sending |
-| `js/world.js` | the data source: `liveSource` (real API) and `demoSource` (simulated) |
+| `js/world.js`, `js/storm.js` | the world the views render, from the real API |
 | `js/api.js`, `js/stream.js` | HTTP client and SSE `ChatStream` |
 | `js/model.js`, `js/timeline.js`, `js/markdown.js`, `js/util.js` | pure helpers: thread state, checklists, message rows and dedupe, asks, `@target`, safe markdown |
 | `js/decide.js`, `js/kit.js`, `js/pacing.js` | decisions, the decision kit and commit window, and pacing (what speaks up and what waits) |
 | `js/intel.js` | the model and depth chip |
-| `js/night.js`, `js/finds.js`, `js/rules.js`, `js/content.js` | demo-only stories and their content |
-| `js/ui.js`, `js/mode.js` | icons and motion helpers, and the Demo/Live badge |
+| `js/content.js` | what an ask costs you, what it frees, and its evidence |
+| `js/ui.js` | icons and motion helpers |
 
 ## Tests
 
@@ -85,7 +76,6 @@ node tests/logic.test.mjs        # pure modules; the live-data part only sends G
 ```
 
 The browser suites (Playwright) live outside the repo:
-- a 105-check suite for Demo;
 - a 59-check suite for Live, which mocks or blocks every non-GET request;
 - a no-writes-on-load check.
 

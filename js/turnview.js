@@ -6,7 +6,7 @@
 // red = failed, everything else neutral ink.
 
 import { esc } from "./world.js";
-import { ICON } from "./ui.js";
+import { ICON, elapsed } from "./ui.js";
 import { renderMarkdown, renderInline } from "./markdown.js";
 
 const KIND_ICON = {
@@ -95,18 +95,77 @@ function blockHtml(b, open, live, now) {
   }
 }
 
+// hub #29: a long task's work (its thinking, tool groups and narration) folds into one line for the
+// whole turn, so the answer isn't buried under thirty folded lines. While the turn runs, the line
+// counts up and the latest block shows under it, live; once it ends, the files it created or edited
+// show as chips, and a step that failed stays outside the fold. Opening the line shows every block
+// as before, on a thin rail.
+const WORK = new Set(["thinking", "activity", "narration"]);
+const BAD = new Set(["error", "denied"]);
+const CHANGED = new Set(["create_file", "edit_file"]);
+const base = (p) => String(p || "").replace(/\/+$/, "").split("/").pop();
+
+function workFold(turn, work, blocks, open, live, now) {
+  const key = `work:${turn.id}`;
+  const isOpen = !!open[key];
+  const rows = work.flatMap((b) => (b.type === "activity" ? b.rows || [] : []));
+  const steps = rows.filter((r) => r.kind !== "notice" && r.kind !== "error").length;
+  const end = turn.end || {};
+  const started = Date.parse(turn.at);
+  const took = live ? null : end.wall_ms ?? null;
+  const time = live
+    ? (Number.isFinite(started) ? ` · <span class="elapsed" data-since="${started}">${elapsed(Math.max(0, Math.floor((now - started) / 1000)))}</span>` : "")
+    : took != null ? ` ${secs(took)}` : "";
+  const waiting = live && rows.some((r) => r.waiting);
+  const head = `<button type="button" class="tb-h tb-wh" data-tb="${esc(key)}" aria-expanded="${isOpen}">` +
+    `<span class="tb-hi">${live ? `<i class="spin tb-spin" aria-hidden="true"></i>` : ICON.list}</span>` +
+    `<span class="tb-ht${live && !waiting ? " shimmer" : ""}">${live ? (waiting ? "Waiting for you" : "Working") : "Worked"}${time}</span>` +
+    (steps ? `<span class="tb-wn">${steps} ${steps === 1 ? "step" : "steps"}</span>` : "") + `<span class="tb-chev">${ICON.chevron}</span></button>`;
+  if (isOpen) return `<div class="tb tb-work is-open${live ? " is-live" : ""}">${head}<div class="tb-rail">${work.map((b) => blockHtml(b, open, live, now)).join("")}</div></div>`;
+  let under = "";
+  if (live) {
+    // the ticker: only the latest block, as it streams; older ones are in the count. A step that
+    // waits on you shows wherever it is.
+    const asks = rows.filter((r) => r.waiting);
+    under = asks.length ? `<ul class="tb-rows is-cur">${asks.map((r) => rowHtml(r, open)).join("")}</ul>` : blockHtml(work[work.length - 1], open, live, now);
+  } else {
+    // a failed turn's own error is said in its last line already
+    const bad = rows.filter((r) => (BAD.has(r.status) || r.kind === "error") && !(turn.status === "failed" && r.kind === "error"));
+    if (bad.length) under += `<ul class="tb-rows tb-bad">${bad.slice(-3).map((r) => rowHtml(r, open)).join("")}</ul>`;
+    const shared = new Set(blocks.filter((b) => b.type === "shared_files").flatMap((b) => (b.files || []).map((f) => base(f.path || f.name))));
+    const files = new Map();
+    for (const r of rows) if (CHANGED.has(r.kind) && r.status === "ok" && r.target && !shared.has(base(r.target))) files.set(r.target, r);
+    if (files.size) {
+      const list = [...files.values()];
+      const shown = list.slice(0, 6);
+      under += `<ul class="tb-chg" aria-label="Files changed">${shown.map((r) => `<li><button type="button" class="tb-cf" data-file="${esc(r.target)}" data-file-name="${esc(base(r.target))}" title="${esc(r.target)}"><span class="tb-cfi">${r.kind === "create_file" ? ICON.doc : ICON.edit}</span><span class="tb-cfn">${esc(base(r.target))}</span></button></li>`).join("")}` +
+        (list.length > shown.length ? `<li><button type="button" class="tb-cf is-more" data-tb="${esc(key)}">+${list.length - shown.length} more</button></li>` : "") + `</ul>`;
+    }
+  }
+  return `<div class="tb tb-work${live ? " is-live" : ""}${waiting ? " is-waiting" : ""}">${head}${under}</div>`;
+}
+
 /**
  * A turn's blocks as HTML. opts: {open, hideAnswer, now}. A turn that ended with no blocks
  * (the CLI said nothing) renders nothing; a stopped or failed turn says so in one quiet line.
+ * Two or more work blocks fold into one line where the first of them was (hub #29).
  */
 export function turnHtml(turn, blocks, { open = {}, hideAnswer = false, now = Date.now() } = {}) {
   const live = turn.status === "running";
-  const parts = blocks.filter((b) => !(hideAnswer && b.type === "answer")).map((b) => blockHtml(b, open, live, now)).filter(Boolean);
+  const shown = blocks.filter((b) => !(hideAnswer && b.type === "answer"));
+  const work = shown.filter((b) => WORK.has(b.type));
+  const fold = work.length >= 2;
+  const parts = [];
+  for (const b of shown) {
+    if (fold && WORK.has(b.type)) { if (b === work[0]) parts.push(workFold(turn, work, shown, open, live, now)); continue; }
+    parts.push(blockHtml(b, open, live, now));
+  }
+  const html = parts.filter(Boolean);
   const end = turn.end || {};
   let foot = "";
   if (turn.status === "stopped" || turn.stopped) foot = `<p class="tb-end is-stop">■ Stopped${turn.stopped && turn.stopped.last_step ? ` after “${esc(turn.stopped.last_step)}”` : ""}</p>`;
   else if (turn.status === "failed") foot = `<p class="tb-end is-err">${ICON.close}<span>This turn failed${end.error ? `: ${esc(String(end.error).slice(0, 240))}` : ""}</span></p>`;
   else if (turn.status === "interrupted") foot = `<p class="tb-end">Interrupted${end.reason === "restart" ? " by a restart; it picks up again" : ""}</p>`;
-  if (!parts.length && !foot) return "";
-  return `<div class="turn${live ? " is-live" : ""}" data-turn="${esc(turn.id)}">${parts.join("")}${foot}</div>`;
+  if (!html.length && !foot) return "";
+  return `<div class="turn${live ? " is-live" : ""}" data-turn="${esc(turn.id)}">${html.join("")}${foot}</div>`;
 }

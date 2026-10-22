@@ -31,9 +31,8 @@ const MARK = (s) => (s === "done" ? "✓" : s === "doing" ? "✱" : "○");
 // a sentence starting with a command ("git push…", "npm install…") stays as written
 const COMMANDS = new Set(["git", "npm", "npx", "pnpm", "yarn", "bun", "deno", "node", "python", "python3", "pip", "pip3", "uv", "rm", "mv", "cp", "ls", "cd", "cat", "curl", "wget", "docker", "kubectl", "cargo", "rustc", "sudo", "chmod", "chown", "mkdir", "touch", "sed", "awk", "grep", "ssh", "scp", "tar", "brew", "apt", "gh", "terraform"]);
 const cap = (s) => { const t = String(s || "").trim(); const w = (t.match(/^[a-z]+(?= |$)/) || [])[0]; return w && !COMMANDS.has(w) ? t.charAt(0).toUpperCase() + t.slice(1) : t; };
-const ord = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`;
 
-export function createDecisions({ world, P, rules, PROJ, announce, render, later, waitSince, absorbing, onOpenThread, onAllClear, onUndone, onBreak, onSent, onNotSent }) {
+export function createDecisions({ world, P, PROJ, announce, render, later, waitSince, onOpenThread, onAllClear, onUndone, onBreak, onSent, onNotSent }) {
   const panel = $("#panel"), stage = $("#pn-stage");
   const firstSeen = new Map();
   let seq = 0;
@@ -63,7 +62,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
         for (const a of Kit.asksOf(t)) {
           if (!a.item) continue;
           const k = Kit.askKey(t, a);
-          if (queue.has(k) || sentKeys.has(k) || absorbing.has(k)) continue;
+          if (queue.has(k) || sentKeys.has(k)) continue;
           out.push({ key: k, t, ask: a, group: Kit.groupOf(t, a), risk: Kit.riskOf(a) });
         }
         continue;
@@ -72,7 +71,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
       if ((t.state === "done" || t.state === "resolved") && !(t.asks || []).some((a) => a.item)) continue;
       for (const a of Kit.asksOf(t)) {
         const key = Kit.askKey(t, a);
-        if (queue.has(key) || sentKeys.has(key) || absorbing.has(key)) continue;
+        if (queue.has(key) || sentKeys.has(key)) continue;
         out.push({ key, t, ask: a, group: Kit.groupOf(t, a), risk: Kit.riskOf(a) });
       }
     }
@@ -200,7 +199,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
   function open(startKey, { only = null, teach: teachScope = null } = {}) {
     let needs = needItems();
     const start = startKey && needs.find((n) => n.key === startKey);
-    if (start && (start.held || start.parked)) { P.bringIn(start.key); needs = needItems(); }
+    if (start && start.held) { P.bringIn(start.key); needs = needItems(); }
     needs = needs.filter((n) => n.admitted);
     if (only === "glance") needs = needs.filter((n) => n.effort === "glance" && !n.later);
     else if (Array.isArray(only)) needs = needs.filter((n) => only.includes(n.key));
@@ -286,11 +285,11 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
   }
 
   // ── deciding ──────────────────────────────────────────────────────────────
-  function decide(n, choice, note = "", { secs = null } = {}) {
+  function decide(n, choice, note = "", { secs = null, inline = false } = {}) {
     note = String(note || "").trim();
     // one decision per ask: a second press (a double-click, a key during the card's exit) does nothing
     if (queue.has(n.key) || sentKeys.has(n.key) || (F.open && /^(allow|back)$/.test(F.status.get(n.key) || ""))) return null;
-    if (n.ask.item) return decideItem(n, choice, note, secs);
+    if (n.ask.item) return decideItem(n, choice, note, secs, inline);
     let taught = false, scope = null;
     if (choice === "allow" && teach.get(n.key)) {
       const cmd = Kit.commandOf(n.ask);
@@ -307,9 +306,8 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
     const entry = { id: ++logN, key: n.key, verb, choice: choice === "allow" || choice === "deny" ? choice : "answer", label: n.ask.title, said, note, taught, fromSug, project: n.t.project, thread: n.t.title, tid: n.t.id, at: Date.now(), status: "queued", risk: n.risk, lev: n.lev, doneAt: n.t.checklist.done, secs: secs ?? (n.effort === "glance" ? 5 : 40) };
     log.unshift(entry);
     teach.delete(n.key);
-    if (choice === "allow" && n.ask.kind === "permission") rules.noteAllowed(n, taught, scope);
     if (F.open) F.status.set(n.key, choice === "deny" ? "back" : "allow");
-    queue.push([{ key: n.key, n, t: n.t, ask: n.ask, choice, note, stopped, entry }], { verb, label: done ? n.t.title : said ? `${said}` : n.ask.title, deny: choice === "deny" });
+    queue.push([{ key: n.key, n, t: n.t, ask: n.ask, choice, note, stopped, entry }], { verb, label: done ? n.t.title : said ? `${said}` : n.ask.title, deny: choice === "deny", inline });
     sound.play(choice === "deny" ? "back" : "allow");
     announce(done ? `Done: ${n.t.title} will be resolved. Undo for 3 seconds.` : `${verb}${said ? `: ${said}` : ""}. Undo for 3 seconds.`);
     toastRender();
@@ -318,7 +316,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
   }
 
   /** A storm item: the request body is built now (so a bad choice is refused before the window). */
-  function decideItem(n, choice, note, secs) {
+  function decideItem(n, choice, note, secs, inline) {
     const it = n.ask.item;
     const P = itemParts(it);
     if (choice === "allow" && teach.get(n.key)) choice = { scope: P.scopes.find((o) => o.id === teach.get(n.key)) };
@@ -334,9 +332,9 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
     log.unshift(entry);
     teach.delete(n.key);
     if (F.open) F.status.set(n.key, no ? "back" : "allow");
-    queue.push([{ key: n.key, n, t: n.t, ask: n.ask, choice: { storm: true, body }, note: "", stopped: false, entry }], { verb, label: said || it.title, deny: no });
+    queue.push([{ key: n.key, n, t: n.t, ask: n.ask, choice: { storm: true, body }, note: "", stopped: false, entry }], { verb, label: said || it.title, deny: no, inline });
     sound.play(no ? "back" : "allow");
-    announce(done ? `Done: ${n.t.title} will be resolved. Undo for 3 seconds.` : `${verb}${said ? `: ${said}` : ""}. Undo for 3 seconds.`);
+    announce(`${verb}${said ? `: ${said}` : ""}. Undo for 3 seconds.`);
     toastRender();
     render();
     return entry;
@@ -359,7 +357,6 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
       const entry = { id: ++logN, key: n.key, verb: "Allowed", choice: "allow", label: n.ask.title, project: n.t.project, thread: n.t.title, tid: n.t.id, at: Date.now(), status: "queued", risk: n.risk, batch: true, lev: n.lev, doneAt: n.t.checklist.done, secs: 3 };
       log.unshift(entry);
       F.status.set(n.key, "allow");
-      rules.noteAllowed(n, false, null);
       return { key: n.key, n, t: n.t, ask: n.ask, choice: "allow", note: "", entry };
     });
     queue.push(parts, { verb: "Allowed", label: `${batch.length} routine asks` });
@@ -516,7 +513,6 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
     const ev = evidenceFor(n);
     const opts = !binary && !stopped && Array.isArray(a.options) && a.options.length ? a.options : null;
     const teachable = a.kind === "permission" && !destructive && !!cmd;
-    const reps = teachable ? rules.repeats(n) : 0;
     const E = EFFORT[n.effort];
     const openEv = !!F.open0[n.key]?.ev && surface === "panel";
     const scope = teach.get(n.key);
@@ -545,7 +541,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
     const low = [];
     // a live waiting thread: the way to read all of it is the thread itself (if1 #5)
     if (a.live && a.replyOnly && !a.pending && surface === "panel" && !t.host) low.push(`<button type="button" class="b-later b-open" data-act="thread" title="Open the thread beside the panel${K.hint("open")}">${ICON.arrow}Open the thread</button>`);
-    if (teachable) low.push(`<button type="button" class="teach-tog" data-act="teach" aria-pressed="${!!scope}" title="Make it a rule${K.hint("rule")}"><span class="sw" aria-hidden="true"></span>${reps >= 2 ? `<span class="rep">${ord(reps + 1)} time this week</span> · ` : ""}Make it a rule</button>`);
+    if (teachable) low.push(`<button type="button" class="teach-tog" data-act="teach" aria-pressed="${!!scope}" title="Make it a rule${K.hint("rule")}"><span class="sw" aria-hidden="true"></span>Make it a rule</button>`);
     if (destructive) low.push(`<button type="button" class="b-later" data-act="later" title="Plan for later today${K.hint("later")}">${ICON.clock}Later today</button><span class="c-low-t">or skip to the easier ones</span>`);
     else if (n.effort === "think") low.push(`<button type="button" class="b-later" data-act="later" title="Plan for later today${K.hint("later")}">${ICON.clock}Later today</button>`);
     if (low.length) act += `<div class="c-low">${low.join("")}</div>`;
@@ -641,7 +637,8 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
     const ready = () => performance.now() - shownAt >= Kit.READ_MS;
     const secs = () => Math.max(2, Math.round((performance.now() - shownAt) / 1000));
     // decide, then move on: only when a decision was queued (a repeat press or a refused choice stays put)
-    const go = (choice, how, note = "") => { const entry = decide(n, choice, note, { secs: secs() }); if (entry) ctx.after(how); return entry; };
+    // the thread's own card says what it did, with its own Undo, in place: no second box (the toast) for it
+    const go = (choice, how, note = "") => { const entry = decide(n, choice, note, { secs: secs(), inline: ctx.surface === "dock" }); if (entry) ctx.after(how); return entry; };
     let noteMode = null;
     const body = frame;
     const step = ctx.onStep || null;
@@ -959,7 +956,7 @@ export function createDecisions({ world, P, rules, PROJ, announce, render, later
   const toast = $("#toast");
   let toastItem = null;
   function toastRender() {
-    const it = queue.queued[queue.queued.length - 1];
+    const it = [...queue.queued].reverse().find((x) => !x.meta.inline);
     if (!it) {
       if (toastItem) { toast.classList.add("bye"); setTimeout(() => { if (!queue.queued.length) { toast.hidden = true; toast.classList.remove("bye"); } }, 200); }
       toastItem = null;

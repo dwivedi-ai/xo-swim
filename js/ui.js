@@ -1,6 +1,5 @@
-// Converged · small shared helpers: icons, a keyed DOM reconciler, time words (with a display
-// clock the evening → morning demo can shift), smooth disclosure, reduced motion and the optional
-// soft sounds (off by default).
+// Converged · small shared helpers: icons, a keyed DOM reconciler, time words, smooth disclosure,
+// reduced motion and the optional soft sounds (off by default).
 import { esc } from "./world.js";
 
 const I = (d, extra = "") =>
@@ -48,7 +47,6 @@ export const ICON = {
   pause: I('<path d="M9 6v12M15 6v12"/>', ' stroke-width="2"'),
   hourglass: I('<path d="M7 3.5h10M7 20.5h10M8 3.5c0 5 8 5 8 8.5s-8 3.5-8 8.5M16 3.5c0 2.5-2 4-4 5"/>'),
   sun: I('<circle cx="12" cy="12" r="4"/><path d="M12 2.8v2M12 19.2v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.8 12h2M19.2 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
-  seed: I('<path d="M12 20v-7"/><path d="M12 13c0-4 2.6-6.6 7-7 0 4.4-2.8 7-7 7z"/><path d="M12 15.5C12 12.6 10 10.6 6 10.4c0 3.2 2 5.1 6 5.1z"/>'),
   replay: I('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/><path d="M10.5 9.2v5.6l4.6-2.8z" fill="currentColor" stroke="none"/>'),
   rule: I('<path d="M5 5h14M5 10h14M5 15h8"/><path d="M16 15.5l1.8 1.8L21 14"/>'),
   shield: I('<path d="M12 3.5 19 6v5.6c0 4.2-2.9 7.5-7 8.9-4.1-1.4-7-4.7-7-8.9V6z"/><path d="M9 12l2.2 2.2L15.5 10"/>'),
@@ -182,15 +180,11 @@ export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const RM = matchMedia("(prefers-reduced-motion: reduce)");
 export const wait = (ms) => new Promise((r) => setTimeout(r, RM.matches ? 0 : ms));
 
-// The evening → morning demo shifts every clock the person sees (never the world's own timestamps).
-let SHIFT = 0;
-export function setClockShift(ms) { SHIFT = ms; }
-export const shifted = (ms = Date.now()) => ms + SHIFT;
 export function clock(ms) {
-  return new Date(ms + SHIFT).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 export function dayOf(ms, now = Date.now()) {
-  const d = new Date(ms + SHIFT), t = new Date(now + SHIFT), y = new Date(now + SHIFT - 86400000);
+  const d = new Date(ms), t = new Date(now), y = new Date(now - 86400000);
   if (d.toDateString() === t.toDateString()) return "Today";
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -202,7 +196,7 @@ export function short(ms, now = Date.now()) {
   if (m < 60) return `${m}m`;
   const h = Math.round(m / 60);
   if (h < 24) return `${h}h`;
-  return new Date(ms + SHIFT).toLocaleDateString(undefined, { weekday: "short" });
+  return new Date(ms).toLocaleDateString(undefined, { weekday: "short" });
 }
 export function elapsed(secs) {
   if (secs < 60) return `${secs}s`;

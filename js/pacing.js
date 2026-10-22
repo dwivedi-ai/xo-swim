@@ -11,8 +11,6 @@
 //            may speak up, once, in the calm line above the composer.
 //   break    after ~25 minutes inside the decision panel, the next natural
 //            pause suggests a break (the queue holds safely).
-//   seal     the end of the day holds every channel until morning, but only
-//            when nothing is time-critical (see night.js).
 
 export const SMALL_MIN = 30;   // below this, an ask that isn't blocking anyone can wait
 export const PING_MIN = 60;    // only asks that free at least this much may speak up
@@ -25,9 +23,7 @@ export function createPacing({ params }) {
     reviewFrom: 0,
     vigilAckAt: -1,
     brought: new Set(),   // held asks the person brought in
-    parked: new Set(),    // away: asks parked behind the first three
     pinged: new Set(),
-    sealed: false,
   };
   const bypass = (n) => n.risk === "destructive" || n.group === "stopped";
 
@@ -40,8 +36,7 @@ export function createPacing({ params }) {
         n.held = true;
         n.heldWhy = "Small, and its agent works around it.";
       }
-      n.parked = !n.held && !n.bypass && S.parked.has(n.key);
-      n.admitted = !n.held && !n.parked;
+      n.admitted = !n.held;
     }
     return needs;
   }
@@ -50,17 +45,13 @@ export function createPacing({ params }) {
     S,
     classify,
     isBypass: bypass,
-    bringIn(key) { S.brought.add(key); S.parked.delete(key); },
-    park(keys) { for (const k of keys) S.parked.add(k); },
-    unpark() { S.parked.clear(); },
+    bringIn(key) { S.brought.add(key); },
     /** Leverage-gated: may this newly arrived ask speak up (once)? */
     mayPing(n) {
-      if (S.sealed || S.pinged.has(n.key) || n.held || n.lev.min < S.pingMin) return false;
+      if (S.pinged.has(n.key) || n.held || n.lev.min < S.pingMin) return false;
       S.pinged.add(n.key);
       return true;
     },
-    set sealed(v) { S.sealed = !!v; },
-    get sealed() { return S.sealed; },
 
     // ── the vigilance cap: time spent deciding ───────────────────────────────
     reviewStart() { if (!S.reviewFrom) S.reviewFrom = Date.now(); },

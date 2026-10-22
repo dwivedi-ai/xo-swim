@@ -1,7 +1,7 @@
 // Settings pages for storm (U2): Routing (R6's "who routes", decision models), Rules (R2: what agents may
 // do without asking), Worktrees (a thread's checkout, removed only after saying what would be lost).
 // Every value shown is the server's; every change is the person's own click, said back plainly.
-// Live only: Demo shows a calm note. Reads on open; the stream keeps the router setting current.
+// Reads on open; the stream keeps the router setting current.
 
 import { api } from "./api.js";
 import { esc } from "./world.js";
@@ -15,7 +15,6 @@ const pcts = (v) => (PCT.some((p) => Math.abs(p - v) < 0.001) || !(v >= 0 && v <
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(+d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
 
 export function createSettings({ world, announce, PROJ, onChange }) {
-  const live = world.mode !== "demo";
   const R = { router: null, models: [], rules: null, defaults: [], trees: null, reported: [], busy: new Set(), err: {}, form: null, confirm: null, keyHint: {} };
 
   const box = (id) => document.querySelector(`[data-page="${id}"] .set-live`);
@@ -30,7 +29,6 @@ export function createSettings({ world, announce, PROJ, onChange }) {
     draw();
     if (sel) { const b = el.querySelector(sel); if (b) b.focus({ preventScroll: true }); else el.closest("[data-page]")?.querySelector("h2")?.focus?.(); }
   }
-  const demoNote = (what) => `<p class="set-empty"><b>Live only.</b> ${what} come from your XO Space; Demo has none.</p>`;
 
   // ── Routing ─────────────────────────────────────────────────────────────
   async function loadRouting() {
@@ -43,7 +41,6 @@ export function createSettings({ world, announce, PROJ, onChange }) {
     const el = box("routing");
     if (!el) return;
     routeSig = routingSig();
-    if (!live) { el.innerHTML = demoNote("Routing and decision models"); return; }
     if (R.err.routing && !R.router) { el.innerHTML = `<p class="set-empty"><b>Couldn't read the routing.</b> ${esc(R.err.routing)}</p>`; return; }
     if (!R.router) { el.innerHTML = `<p class="set-note"><i class="spin" aria-hidden="true"></i> Reading…</p>`; return; }
     const r = world.state.router || R.router;
@@ -114,7 +111,6 @@ export function createSettings({ world, announce, PROJ, onChange }) {
   function drawRules() {
     const el = box("rules");
     if (!el) return;
-    if (!live) { el.innerHTML = demoNote("Your rules"); return; }
     if (R.err.rules && !R.rules) { el.innerHTML = `<p class="set-empty"><b>Couldn't read your rules.</b> ${esc(R.err.rules)}</p>`; return; }
     if (!R.rules) { el.innerHTML = `<p class="set-note"><i class="spin" aria-hidden="true"></i> Reading…</p>`; return; }
     const scopeWord = (r) => {
@@ -154,7 +150,6 @@ export function createSettings({ world, announce, PROJ, onChange }) {
   function drawTrees() {
     const el = box("worktrees");
     if (!el) return;
-    if (!live) { el.innerHTML = demoNote("Worktrees"); return; }
     if (R.err.trees && !R.trees) { el.innerHTML = `<p class="set-empty"><b>Couldn't read the worktrees.</b> ${esc(R.err.trees)}</p>`; return; }
     if (!R.trees) { el.innerHTML = `<p class="set-note"><i class="spin" aria-hidden="true"></i> Reading…</p>`; return; }
     const title = (w) => { const t = world.thread(w.thread_ts); return t ? t.title : "A thread"; };
@@ -202,7 +197,7 @@ export function createSettings({ world, announce, PROJ, onChange }) {
   }
 
   // while the Routing page is open, show what the stream changed (never mid-form or mid-question)
-  if (live && world.subscribe) world.subscribe(() => {
+  if (world.subscribe) world.subscribe(() => {
     const page = box("routing")?.closest("[data-page]");
     if (!R.router || R.form || (R.confirm && R.confirm.dm) || !page || page.hidden || document.querySelector("#settings").hidden) return;
     const sig = routingSig();
@@ -286,7 +281,6 @@ export function createSettings({ world, announce, PROJ, onChange }) {
   return {
     /** A page was opened: read what it shows. */
     open(id) {
-      if (!live) { renderRouting(); renderRules(); renderTrees(); return; }
       if (id === "routing") loadRouting();
       else if (id === "rules") loadRules();
       else if (id === "worktrees") loadTrees();

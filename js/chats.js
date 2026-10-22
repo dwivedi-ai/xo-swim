@@ -30,7 +30,6 @@ const ago = (iso) => { const s = (Date.now() - Date.parse(iso)) / 1000; if (!Num
 export function createChats({ world, announce, heraldShow, go, schedule, view, restore }) {
   // confirm: one "send now" question per chat (session id → {local, count}), shown only in that chat
   const C = { list: null, loading: false, err: null, titles: new Map(), hist: new Map(), local: new Map(), prefs: { ...store.get() }, models: new Map(), pop: { open: false }, confirm: new Map() };
-  const live = world.mode !== "demo";
 
   const sessions = () => Object.values(world.state.sessions || {}).filter((s) => s.role === "plain" && !s.retired_at);
   const session = (sid) => (world.state.sessions || {})[sid] || null;
@@ -40,7 +39,7 @@ export function createChats({ world, announce, heraldShow, go, schedule, view, r
 
   // ── the list ────────────────────────────────────────────────────────────
   async function loadList() {
-    if (!live || C.loading) return;
+    if (C.loading) return;
     C.loading = true;
     try {
       const d = await api.sessions({ role: "plain", before_seq: NEWEST, limit: 100 });
@@ -77,7 +76,6 @@ export function createChats({ world, announce, heraldShow, go, schedule, view, r
   const waiting = (s) => s.state === "waiting_on_person";
 
   function listItems() {
-    if (!live) return [{ key: "chats-demo", html: `<p class="m-note">Chats run in Live: a plain chat with one agent, in a folder you choose.</p>` }];
     const rows = sessions().sort((a, b) => Date.parse(b.updated_at || b.created_at) - Date.parse(a.updated_at || a.created_at));
     if (!C.list && !rows.length) return [{ key: "chats-load", html: `<p class="m-note">${C.err ? `Couldn't read your chats: ${esc(C.err)}` : "Reading your chats…"}</p>` }];
     if (!rows.length) return [{ key: "chats-none", html: `<div class="calm ch-calm"><div class="calm-mark">${ICON.thread}</div><h2>No chats yet.</h2><p>Ask anything below. A chat is one agent in one folder, outside your projects' coordinators.</p></div>` }];
@@ -96,7 +94,6 @@ export function createChats({ world, announce, heraldShow, go, schedule, view, r
    * from the CLI or another tab show; a history is "loaded" only once it was really read.
    */
   async function loadChat(sid) {
-    if (!live) return;
     const h = C.hist.get(sid) || { loading: false, loaded: false, user: [], error: null, turns: false };
     C.hist.set(sid, h);
     if (h.loading) { h.again = true; return; }
@@ -129,7 +126,7 @@ export function createChats({ world, announce, heraldShow, go, schedule, view, r
   }
   // a turn that starts in the open chat may carry a prompt sent from elsewhere: read the history again
   const turnCount = new Map();
-  if (live && world.subscribe) world.subscribe(() => {
+  if (world.subscribe) world.subscribe(() => {
     // a "send now" chosen for a turn ends with that turn, wherever you are when it ends
     if (C.now && !BUSY.has((session(C.now) || {}).state)) C.now = null;
     const v = view && view();
@@ -366,7 +363,6 @@ export function createChats({ world, announce, heraldShow, go, schedule, view, r
   });
 
   return {
-    live,
     isChats: (v) => v === "chats" || (v && v.startsWith("c:")),
     open(v) { if (v === "chats") loadList(); else if (v.startsWith("c:")) loadChat(v.slice(2)); },
     items: (v) => (v === "chats" ? listItems() : chatItems(v.slice(2))),

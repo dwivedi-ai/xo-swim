@@ -1,4 +1,4 @@
-// Live mode on storm: the real XO Space, through `/api/chat/*` and ONE global stream
+// The world on storm: the real XO Space, through `/api/chat/*` and ONE global stream
 // (/home/coder/sedc/handoffs/UI-reference.md §4.0). Normalises storm's chats, threads, messages,
 // sessions, turns and review items into the world the views render (js/world.js), and turns
 // the person's actions into requests. It owns no decision logic: risk, scopes, rule sentences,

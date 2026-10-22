@@ -6,23 +6,17 @@
 // Pacing is invisible: asks are ranked, small ones that block nobody wait
 // quietly ("can wait", with the honest reason), destructive and stopped asks
 // are never held, only high-leverage arrivals speak up, a break after ~25 min
-// of deciding. One end-of-day moment ("Before you go": queue tonight's work,
-// then seal) and a morning recap on the first visit. Found while working (≤2).
-// A plain "3rd time · make it a rule?" inside a decision. Stop while anything
-// runs. Intelligence per session in the composer. Light and dark.
+// of deciding. Stop while anything runs. Intelligence per session in the
+// composer. Light and dark.
 import { createWorld, esc, WAITING } from "./world.js";
-import { mountMode } from "./mode.js";
 import { renderMarkdown, renderInline } from "./markdown.js";
 import * as Kit from "./kit.js";
 import * as K from "./keys.js";
 import { createDecisions } from "./decide.js";
 import { createPacing } from "./pacing.js";
-import { createRules } from "./rules.js";
-import { createFinds } from "./finds.js";
-import { createNight } from "./night.js";
 import { createIntel } from "./intel.js";
-import { EFFORT, HELD_SEED, estLine, evidenceFor } from "./content.js";
-import { ICON, XO, NEXT_GLYPH, $, $$, RM, clock, dayOf, short, elapsed, reconcile, sound, wait, dial, morph, expand, shifted } from "./ui.js";
+import { EFFORT, estLine, evidenceFor } from "./content.js";
+import { ICON, XO, NEXT_GLYPH, $, $$, RM, clock, dayOf, short, elapsed, reconcile, sound, wait, dial, morph, expand } from "./ui.js";
 import { uiMsg, echoes, threadAnchors, parseTarget as targetOf, stripTarget, sendErrorTitle, connLine, sendBlock, plainText, hopLine, sharedFileRoute, relayedInto } from "./timeline.js";
 import { turnHtml } from "./turnview.js";
 import { itemParts } from "./review.js";
@@ -32,12 +26,8 @@ import { createChats } from "./chats.js";
 import { createViewer } from "./viewer.js";
 
 const world = createWorld();
-// Demo-only features (seeded content, the night, rules, finds, Stop) never run against the real backend.
-const DEMO = world.mode === "demo";
-mountMode(world);
 
 const params = new URL(location.href).searchParams;
-const T0 = Date.now();
 const PROJ = (id) => (id === "workspace" ? "Workspace" : id === "@account" ? "Your account" : id === "@chats" ? "Chats" : world.project(id)?.name || id);
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -48,8 +38,7 @@ const NUM = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight
 const num = (n) => NUM[n] || String(n);
 const low = (n) => num(n).toLowerCase();
 const plural = (n, w) => `${w}${n === 1 ? "" : "s"}`;
-// Drafts are kept per mode, so demo text never lands in a live composer (P3-4).
-const DRAFTS = DEMO ? "cv-drafts" : "cv-drafts:live";
+const DRAFTS = "cv-drafts:live";
 const STOP_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor"/></svg>`;
 
 // ── theme: dark by default, a slide toggle in the sidebar (#28) ────────────
@@ -73,70 +62,27 @@ const S = {
   stops: new Map(),        // live Stops by session: waiting out their Undo, or on their way
   tEdit: null,             // a thread header field being edited: {tid, field: "title"|"label"}
   recording: null, keyErr: null,  // Settings › Keyboard: the action waiting for a new key, and why the last one was refused            // asks folded away in their thread so you can read it first (by ask key)
-  local: {}, alias: new Map(), localThread: new Map(),
+  local: {}, alias: new Map(),
   drafts: store.get(DRAFTS, {}),
   later: new Set(),
   pin: null,
   wash: new Map(),
   herald: null,
   ckOpen: {}, ckSeen: {}, ckFresh: null,
-  handledOpen: false, eodOpen: false, rulesOpen: false,
-  typing: {}, desc: {}, stopped: {},
+  handledOpen: false,
+  desc: {},
   seen: null,
   allFilter: "all", allDone: false,
-  morningOpen: false,
   n: 0,
 };
 const waitSince = new Map();
-const absorbing = new Set();
 const live = $("#live");
 function announce(text) { live.textContent = ""; setTimeout(() => { live.textContent = text; }, 40); }
 
-// ── demo world seeding (demo only; live reads what's there) ────────────────
-if (world.mode === "demo") {
-  const th = (re) => world.state.threads.find((t) => re.test(t.title));
-  const now = Date.now();
-  const since = [[/dark mode contrast/i, 70 * 1000], [/retry soft declines/i, 42 * 60000], [/interview notes/i, (3 * 60 + 12) * 60000], [/nightly job/i, 2 * 3600000], [/backfill/i, 64 * 60000]];
-  for (const [re, ms] of since) { const t = th(re); if (t) waitSince.set(t.id, now - ms); }
-  for (const h of HELD_SEED) {
-    const t = th(h.thread);
-    if (t && t.state === "working") t.asks = [{ id: `held_${t.id}`, ...h.ask }];
-  }
-  // The third `npm test` this week: the decision offers a rule.
-  const off = th(/Offline mode/i);
-  if (off) {
-    off.state = "needs_approval";
-    off.asks = [{ id: "seed_npmtest", kind: "permission", title: "Run: npm test -- mobile-app", detail: "Read-only test run in the project folder.", risk: "routine" }];
-    off.needsYou = off.asks[0].title;
-    waitSince.set(off.id, now - 3 * 60000);
-  }
-  // ?many=1 : a project with many threads, to show the Now shelf never grows
-  if (params.has("many")) {
-    const mk = (title, state, steps, done, i) => ({
-      id: `many_${i}`, project: "billing-api", title, state, headline: "", branch: `xo/${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 22)}`,
-      happened: state === "done" ? "Done. All tests pass." : "Reading the code around it.", needsYou: "",
-      createdAt: now - (2 + i * 7) * 3600000, lastAt: now - (1 + i * 5) * 3600000,
-      checklist: { items: steps.map((s, k) => ({ text: s, state: k < done ? "done" : k === done && state === "working" ? "doing" : "todo" })), total: steps.length, done, doing: state === "working" ? 1 : 0 },
-      messages: [{ id: `m_many_${i}`, at: now - 7200000, who: "you", text: title + "." }], asks: [], _steps: steps,
-    });
-    const done = ["Webhook signature check", "Idempotency keys on refunds", "Coupon rounding", "Tax ID validation", "Currency display for JPY", "Invoice PDF fonts", "Proration preview endpoint", "Retry jitter tuning", "Remove legacy v1 routes", "Stripe event dedupe", "Late-fee policy flag", "Card brand icons"];
-    done.forEach((d, i) => world.state.threads.push(mk(d, "done", ["Read", "Change", "Test"], 3, i)));
-    world.state.threads.push(mk("Dunning email templates for failed renewals", "working", ["Draft", "Wire hooks", "Tests", "Preview"], 1, 20));
-    world.state.threads.push(mk("Annual plan discounts", "working", ["Model", "Migrate", "Tests"], 2, 21));
-    world.state.threads.push(mk("Refund reasons report", "working", ["Query", "Chart", "Export"], 0, 22));
-  }
-}
-
 // ── the parts ───────────────────────────────────────────────────────────────
 const P = createPacing({ params });
-const R = createRules({
-  PROJ,
-  onChange: () => schedule(),
-  onEvent: (e) => { if (e.kind === "rule") { heraldShow({ kind: "rule", text: "Rule added", sub: "it answers these from now on" }, 4600); setTimeout(absorbSweep, 3400); } },
-});
-const FV = createFinds({ world, params, onArrive: (f) => { announce(`Found while working: ${f.title}.`); schedule(); } });
 const D = createDecisions({
-  world, P, rules: R, PROJ, announce, waitSince, absorbing,
+  world, P, PROJ, announce, waitSince,
   render: () => schedule(),
   later: S.later,
   onOpenThread: (tid) => {
@@ -155,9 +101,8 @@ const D = createDecisions({
     if (part.ask.stopByYou && part.choice && part.choice.option === "Stop here") setTimeout(() => { world.act.resolve(part.t.id).catch(() => {}); }, 1600);
   },
 });
-const NIGHT = createNight({ world, D, params, extra: () => Object.values(S.local) });
 const IQ = createIntel({
-  world, PROJ, params,
+  world, PROJ,
   onChange: (o) => { chipRender(o && o.fade); },
   record: (session, rec) => recordLine(session, rec),
 });
@@ -181,6 +126,7 @@ const VW = createViewer({ announce }); // a shared file beside the conversation 
 
 // ── world helpers ───────────────────────────────────────────────────────────
 const projects = () => world.state.projects.filter((p) => p.id !== "workspace");
+const RUNNING = new Set(["queued", "starting", "running", "stopping"]); // a session on a turn (storm.js BUSY)
 const threadsOf = (pid) => world.state.threads.filter((t) => t.project === pid && t.state !== "resolved");
 const convThread = (v) => (v && v.startsWith("t:") ? world.thread(v.slice(2)) : null);
 const convProject = (v) => (v === "ws" || v === "home" ? "workspace" : v.startsWith("p:") ? v.slice(2) : convThread(v)?.project);
@@ -201,47 +147,20 @@ const askShort = (n) => {
   return n.ask.title;
 };
 const STATE_WORD = { working: "Working", needs_reply: "Needs you", needs_approval: "Needs you", paused: "Paused", done: "Done", failed: "Stopped", resolved: "Resolved" };
-// Live: "Working" only while its agent really works (detail `busy`, or our reply awaits an answer).
-// A working thread whose session sits idle reads "Idle" (P1-8). Demo threads have no `busy`.
+// "Working" only while its agent really works (detail `busy`, or our reply awaits an answer).
+// A working thread whose session sits idle reads "Idle" (P1-8).
 const isBusy = (t) => t.busy === true || (t.state === "working" && t.busy !== false);
 const glyphOf = (t) => (t.state === "working" && t.busy === false ? "idle" : t.state);
 const wordOf = (t) => (glyphOf(t) === "idle" ? "Idle" : STATE_WORD[t.state]);
 const SORT_STATE = { needs_approval: 0, needs_reply: 0, paused: 0, failed: 1, working: 2, done: 3, resolved: 4 };
 const doneToday = () => world.state.threads.filter((t) => t.state === "done" && new Date(t.lastAt).toDateString() === new Date().toDateString());
-const sealed = () => NIGHT.phase === "night";
-const ord = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`;
-
-// ── rules answer matching asks (demo acts; live would be server-side) ──────
-function absorbSweep() {
-  if (world.mode !== "demo") return;
-  for (const t of world.state.threads) {
-    for (const a of t.asks || []) {
-      const key = Kit.askKey(t, a);
-      if (absorbing.has(key) || D.pendingKey(key)) continue;
-      const cover = R.coverFor(t, a);
-      if (!cover) continue;
-      absorbing.add(key);
-      setTimeout(async () => {
-        try {
-          if (WAITING(t.state)) await world.act.decide(a.id, "allow", "");
-          else { t.asks = t.asks.filter((x) => x !== a); t.needsYou = ""; }
-        } catch { absorbing.delete(key); return; }
-        R.absorbed(t, a, cover);
-        heraldShow({ kind: "rule", text: `Your rule answered: ${Kit.commandOf(a) || a.title}`, sub: PROJ(t.project) }, 5200);
-        absorbing.delete(key);
-        schedule();
-      }, RM.matches ? 300 : 900);
-    }
-  }
-  schedule();
-}
 
 // ── events: a calm labelled line, never the composer, never a quiet row ────
 world.onEvent((e) => {
   if (e.kind === "message") {
-    // live: the coordinator answered something you asked, and you're looking elsewhere: one calm line
+    // the coordinator answered something you asked, and you're looking elsewhere: one calm line
     const conv = e.project === "workspace" ? "ws" : "p:" + e.project;
-    if (e.answered && S.view !== conv && !sealed()) heraldShow({ kind: "reply", text: e.project === "workspace" ? "The coordinator replied" : `${PROJ(e.project)} coordinator replied`, sub: short1(e.text), open: conv }, 7000);
+    if (e.answered && S.view !== conv) heraldShow({ kind: "reply", text: e.project === "workspace" ? "The coordinator replied" : `${PROJ(e.project)} coordinator replied`, sub: short1(e.text), open: conv }, 7000);
     if (e.answered) announce(`${e.project === "workspace" ? "The coordinator" : PROJ(e.project) + " coordinator"} replied: ${e.text}`);
     schedule();
     return;
@@ -250,8 +169,7 @@ world.onEvent((e) => {
   const pid = e.project;
   if (e.kind === "ask" && t && !waitSince.has(t.id)) waitSince.set(t.id, Date.now());
   if (e.kind === "resumed" && t) waitSince.delete(t.id);
-  if (e.kind === "ask") setTimeout(absorbSweep, 50);
-  if (!pid || pid === "workspace" || sealed()) return;
+  if (!pid || pid === "workspace") return;
   if (e.kind === "done" && t) heraldShow({ kind: "done", text: `${t.title} finished`, sub: PROJ(pid), open: "t:" + t.id }, 5200);
   else if (e.kind === "state" && t && t.state === "failed") heraldShow({ kind: "stopped", text: `${t.title} stopped`, sub: PROJ(pid), open: "t:" + t.id }, 5200);
 });
@@ -272,12 +190,11 @@ function pings(needs) {
 // ── sidebar: button-like rows; text only when a project needs you (#27) ────
 function sideRender(needs) {
   const mine = needs.filter((x) => x.admitted && !x.later);
-  const quiet = sealed();
-  const n = quiet ? 0 : mine.length;
+  const n = mine.length;
   const hn = $("#home-n");
-  const hnHtml = quiet ? `<span class="nr-seal">${ICON.moon}</span>` : n ? `<span class="nv-dot" aria-hidden="true"></span>${n}` : "";
+  const hnHtml = n ? `<span class="nv-dot" aria-hidden="true"></span>${n}` : "";
   if (hn._h !== hnHtml) { hn.innerHTML = hnHtml; hn._h = hnHtml; }
-  $("#nv-home").setAttribute("aria-label", quiet ? "Home, sealed for the night" : n ? `Home, ${n} need you` : "Home, nothing needs you");
+  $("#nv-home").setAttribute("aria-label", n ? `Home, ${n} need you` : "Home, nothing needs you");
   $("#nv-home").classList.toggle("is-on", S.view === "home");
   $("#nv-ws").classList.toggle("is-on", S.view === "ws");
   $("#nv-chats").classList.toggle("is-on", CH.isChats(S.view));
@@ -288,7 +205,7 @@ function sideRender(needs) {
   const find = $("#side-find");
   find.hidden = all.length <= FIND_AT && !S.pfind;
   const q = (S.pfind || "").trim().toLowerCase();
-  const needN = (p) => (quiet ? 0 : mine.filter((x) => x.t.project === p.id).length);
+  const needN = (p) => mine.filter((x) => x.t.project === p.id).length;
   const shown = q ? all.filter((p) => String(p.name || p.id).toLowerCase().includes(q)).sort((a, b) => (needN(b) > 0) - (needN(a) > 0)) : all;
   if (S.pfCur >= shown.length) S.pfCur = shown.length - 1;
   const pfn = q ? (shown.length ? `${shown.length} of ${all.length}` : "None") : "";
@@ -296,23 +213,29 @@ function sideRender(needs) {
   sideRender.shown = shown;
   const items = shown.map((p, pi) => {
     const on = S.view === "p:" + p.id || convThread(S.view)?.project === p.id;
-    const asks = quiet ? [] : mine.filter((x) => x.t.project === p.id);
+    const asks = mine.filter((x) => x.t.project === p.id);
     const lead = asks.find((x) => x.group !== "stopped" && x.risk !== "destructive") || asks[0];
-    const busy = threadsOf(p.id).some(isBusy);
+    // every thread with work running counts, a resolved one too (its turn or sub-agents can outlive the
+    // resolve), and so does the project's coordinator while it's on a turn
+    const nBusy = world.state.threads.filter((t) => t.project === p.id && (t.state === "resolved" ? t.busy === true : isBusy(t))).length;
+    const coordBusy = !!p.chatId && Object.values(world.state.sessions || {}).some((x) => x.chat_id === p.chatId && x.role === "project-coordinator" && RUNNING.has(x.state));
+    const busy = nBusy > 0 || coordBusy;
     const needsMe = asks.length > 0;
-    const label = needsMe ? askShort(lead) : "";
+    // hub #31: a project at work reads blue at a glance; what needs you (amber, red) still wins the row
+    const working = busy && !needsMe;
+    const label = needsMe ? askShort(lead) : working ? (nBusy > 1 ? `${nBusy} threads working` : nBusy ? "Working" : "Coordinator working") : "";
     const kind = needsMe ? (lead.risk === "destructive" || lead.group === "stopped" ? "red" : "amber") : "";
     const was = sideRender.needs?.get(p.id) || 0;
     if (asks.length > was && sideRender.ready && !RM.matches) S.wash.set(p.id, { n: (S.wash.get(p.id)?.n || 0) + 1, until: now + 2600 });
     const w = S.wash.get(p.id);
     const washing = w && w.until > now;
     return { key: p.id, html:
-      `<button type="button" class="prow${needsMe ? ` needs k-${kind}` : ""}${on ? " is-on" : ""}${washing ? " wash" : ""}${q && pi === S.pfCur ? " is-cur" : ""}" data-go="p:${esc(p.id)}" data-w="${washing ? w.n : 0}"${on ? ' aria-current="page"' : ""} aria-label="${esc(p.name)}${needsMe ? `. ${asks.length} need${asks.length === 1 ? "s" : ""} you: ${esc(label)}` : busy ? ". Working" : ""}">` +
-      `<span class="pr-ic" aria-hidden="true">${ICON.project}${busy ? `<i class="pr-busy"></i>` : ""}</span>` +
+      `<button type="button" class="prow${needsMe ? ` needs k-${kind}` : working ? " busy" : ""}${on ? " is-on" : ""}${washing ? " wash" : ""}${q && pi === S.pfCur ? " is-cur" : ""}" data-go="p:${esc(p.id)}" data-w="${washing ? w.n : 0}"${on ? ' aria-current="page"' : ""} aria-label="${esc(p.name)}${needsMe ? `. ${asks.length} need${asks.length === 1 ? "s" : ""} you: ${esc(label)}` : busy ? ". Working" : ""}">` +
+      `<span class="pr-ic" aria-hidden="true">${ICON.project}${busy && needsMe ? `<i class="pr-busy"></i>` : ""}</span>` +
       `<span class="pr-main"><span class="pr-l1"><span class="pr-name">${esc(p.name)}</span>${needsMe ? `<span class="pr-w" aria-hidden="true"><i class="pr-d"></i>${asks.length}</span>` : ""}</span>` +
       (label ? `<span class="pr-t">${esc(label)}</span>` : "") + `</span></button>` };
   });
-  sideRender.needs = new Map(projects().map((p) => [p.id, quiet ? 0 : mine.filter((x) => x.t.project === p.id).length]));
+  sideRender.needs = new Map(projects().map((p) => [p.id, mine.filter((x) => x.t.project === p.id).length]));
   if (q && !items.length) items.push({ key: "pf-none", html: `<p class="pf-none">No project called “${esc(S.pfind.trim())}”.</p>` });
   reconcile($("#projects"), items, { quiet: !sideRender.ready });
   sideRender.ready = true;
@@ -342,7 +265,7 @@ const FIND_AT = 8;
 
 // ── Home ────────────────────────────────────────────────────────────────────
 function greeting() {
-  const h = new Date(shifted()).getHours();
+  const h = new Date().getHours();
   return h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 function patch(el, html) {
@@ -359,7 +282,7 @@ function homeParts(needs = D.needItems()) {
   const next = active.find((n) => n.key === S.pin) || active[0] || null;
   S.pin = next ? next.key : null;
   const rest = active.filter((n) => n !== next);
-  return { needs, adm, active, next, then: rest.slice(0, 2), more: rest.slice(2), later: adm.filter((n) => n.later), held: needs.filter((n) => n.held), parked: needs.filter((n) => n.parked), glances: active.filter((n) => n.effort === "glance" && Kit.isBinary(n.ask) && n.group === "routine") };
+  return { needs, adm, active, next, then: rest.slice(0, 2), more: rest.slice(2), later: adm.filter((n) => n.later), held: needs.filter((n) => n.held), glances: active.filter((n) => n.effort === "glance" && Kit.isBinary(n.ask) && n.group === "routine") };
 }
 
 /** An answer button; a preview, when there is one, sits in a small swatch so the button never looks disabled. */
@@ -371,8 +294,6 @@ function nextActHtml(n) {
   const a = n.ask;
   const binary = Kit.isBinary(a);
   const ev = evidenceFor(n);
-  const reps = binary && a.kind === "permission" && n.risk !== "destructive" ? R.repeats(n) : 0;
-  const rule = reps >= 2 ? `<button type="button" class="nx-link is-rule" data-fid="rule" data-rule="${esc(n.key)}" title="Allow it and add a rule, shown word for word first">${ICON.rule}${ord(reps + 1)} time this week · make it a rule?</button>` : "";
   let html = "";
   if (n.effort === "glance" && Array.isArray(a.options) && !binary) {
     html += `<div class="nx-opts" role="group" aria-label="Answers">${a.options.map((o, i) => optHtml(o, i, ev)).join("")}</div>` +
@@ -382,7 +303,7 @@ function nextActHtml(n) {
     const IP = a.item ? itemParts(a.item) : null;
     const yes = IP && IP.primary ? IP.primary.label : "Allow", no = IP && IP.back ? IP.back.label : "Send back";
     html += `<div class="nx-btns"><button type="button" class="b b-allow" data-fid="allow" data-nx-allow><span class="b-l">${ICON.check}${esc(yes)}</span></button><button type="button" class="b b-back" data-fid="back" data-nx-back><span class="b-l">${ICON.rewind}${esc(no)}</span></button></div>` +
-      `<div class="nx-foot"><button type="button" class="nx-link" data-fid="ev" data-decide="${esc(n.key)}">${ICON.eye}Details</button>${rule}</div>`;
+      `<div class="nx-foot"><button type="button" class="nx-link" data-fid="ev" data-decide="${esc(n.key)}">${ICON.eye}Details</button></div>`;
   } else {
     const verb = n.group === "stopped" ? "Look and choose" : n.risk === "destructive" ? "Read it closely" : n.ask.kind === "action" ? "See what it needs" : n.ask.replyOnly ? "Read and reply" : "Decide";
     html += `<div class="nx-btns one"><button type="button" class="b b-go" data-fid="go" data-decide="${esc(n.key)}"><span class="b-l">${verb}${ICON.arrow}</span></button>` +
@@ -410,31 +331,21 @@ function nextCardHtml(n) {
 function homeRender(needs) {
   const box = $("#home");
   if (!box._built) {
-    box.innerHTML = `<div class="hm"><div id="hm-head"></div><div class="hm-body" id="hm-body"><div id="hm-moment"></div><div id="hm-next"></div><div id="hm-then"></div><div id="hm-finds"></div><div id="hm-end"></div></div></div>`;
+    box.innerHTML = `<div class="hm"><div id="hm-head"></div><div class="hm-body" id="hm-body"><div id="hm-next"></div><div id="hm-then"></div><div id="hm-end"></div></div></div>`;
     box._built = true;
   }
   const P0 = homeParts(needs);
   const working = world.state.threads.filter(isBusy);
-  const date = new Date(shifted()).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  const ph = NIGHT.phase;
+  const date = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   const act = P0.active.length;
   let sub;
-  if (ph === "night") sub = "Sealed for the night.";
-  else if (act) sub = act === 1 ? "One thing is worth your time." : `${num(act)} things are worth your time.`;
+  if (act) sub = act === 1 ? "One thing is worth your time." : `${num(act)} things are worth your time.`;
   else sub = P0.held.length ? "Nothing needs you now." : "Nothing needs you.";
-  const down = !DEMO && (world.state.error || world.state.statusError) && !world.state.threads.length;
+  const down = (world.state.error || world.state.statusError) && !world.state.threads.length;
   if (down) sub = "XO can't be reached right now.";
-  const hello = ph === "morning" && NIGHT.away && S.morningOpen ? "Welcome back" : ph === "night" ? "Good night" : greeting();
+  const hello = greeting();
   patch($("#hm-head"), `<header class="hm-top"><div class="hm-hd"><p class="hm-date">${esc(date)}</p><h1 class="hm-h" id="home-h">${hello}.<span> ${sub}</span></h1></div>` +
     `<button type="button" class="create" data-create data-fid="create"><span class="create-ic">${ICON.plus}</span><span>Create XO Project</span></button></header>`);
-
-  if (ph === "night") { homeNight(needs); return; }
-  $("#home").classList.remove("is-night");
-
-  // the morning recap: on the first visit after the night only
-  patch($("#hm-moment"), ph === "morning" && S.morningOpen && NIGHT.harvest ? morningHtml(NIGHT.harvest) : "");
-  const tick = $("#hm-moment .tick");
-  if (tick && !NIGHT.seen) { NIGHT.seen = true; countUp(tick, +tick.dataset.to); }
 
   // the next move (stays put until it's done)
   const nb = $("#hm-next");
@@ -443,11 +354,11 @@ function homeRender(needs) {
   if (card0 && (card0.classList.contains("noting") || card0._busy) && P0.next && card0.dataset.key === P0.next.key) { /* don't disturb a note in progress */ }
   else if (P0.next && inPanel) {
     nb._key = null;
-    patch(nb, `<p class="hm-lbl"><span class="nx-glyph">${NEXT_GLYPH}</span>${ph === "morning" ? "Your first move" : "Your next move"}</p><p class="in-panel">${ICON.arrow}<span>Open in the panel</span></p>`);
+    patch(nb, `<p class="hm-lbl"><span class="nx-glyph">${NEXT_GLYPH}</span>Your next move</p><p class="in-panel">${ICON.arrow}<span>Open in the panel</span></p>`);
   } else if (P0.next) {
     const key = P0.next.key;
     const changed = nb._key !== key;
-    const html = `<p class="hm-lbl"><span class="nx-glyph">${NEXT_GLYPH}</span>${ph === "morning" ? "Your first move" : "Your next move"}</p>` + nextCardHtml(P0.next);
+    const html = `<p class="hm-lbl"><span class="nx-glyph">${NEXT_GLYPH}</span>Your next move</p>` + nextCardHtml(P0.next);
     if (patch(nb, html) && changed) {
       const card = nb.querySelector(".next");
       if (nb._key && !RM.matches) card.classList.add(S.pinAnim === "undo" ? "in-undo" : "in-next");
@@ -463,12 +374,7 @@ function homeRender(needs) {
 
   // then… at most two more
   let then = "";
-  const recap = ph === "morning" && S.morningOpen;
-  if (recap && P0.then.length) {
-    // on the morning's first visit the recap takes the room: the rest is one quiet line
-    const k = P0.then.length + P0.more.length;
-    then = `<div class="then-foot solo"><button type="button" class="hm-quiet" data-fid="more" data-open-all>+${k} more today</button></div>`;
-  } else if (P0.then.length) {
+  if (P0.then.length) {
     then = `<section class="then" aria-labelledby="then-h"><h2 class="hm-lbl" id="then-h">Then</h2><ol>` +
       P0.then.map((n) => `<li><button type="button" class="then-i r-${n.risk}" data-fid="then-${esc(n.key)}" data-decide="${esc(n.key)}">` +
         `<span class="eff e-${n.effort}">${dial(n.effort)}<b>${EFFORT[n.effort].label}</b></span>` +
@@ -483,98 +389,28 @@ function homeRender(needs) {
   } else if (P0.later.length) then = `<div class="then-foot solo"><button type="button" class="hm-quiet is-later" data-fid="bring" data-bring>${ICON.clock}${P0.later.length} later today <span>bring back</span></button></div>`;
   patch($("#hm-then"), then);
 
-  // found value: never pings, at most two
-  patch($("#hm-finds"), ph === "morning" && S.morningOpen ? "" : FV.shelfHtml(PROJ));
-
   endRender(P0, working);
 }
 
-/** The last line: Handled (with what can wait) and the end of the day. Its height never jumps. */
+/** The last line: Handled (with what can wait). Its height never jumps. */
 function endRender(P0, working) {
   const end = $("#hm-end");
   if (!end._built) {
-    end.innerHTML = `<section class="handled" id="handled" aria-label="Handled"><div class="hd-row0"><div id="hd-head"></div><div id="hd-eod"></div></div><div class="hd-b" id="hd-b" hidden><div class="hd-in" id="hd-in"></div></div></section>` +
-      `<section class="eod" id="eod" aria-labelledby="eod-h"><div class="eod-b" id="eod-b" hidden><div class="eod-in" id="eod-in"></div></div></section>`;
+    end.innerHTML = `<section class="handled" id="handled" aria-label="Handled"><div class="hd-row0"><div id="hd-head"></div></div><div class="hd-b" id="hd-b" hidden><div class="hd-in" id="hd-in"></div></div></section>`;
     end._built = true;
   }
   const w = working.length, held = P0.held;
   const bits = [w ? `${low(w)} working` : "nothing running", held.length ? `${low(held.length)} can wait` : ""].filter(Boolean);
   patch($("#hd-head"), `<button type="button" class="hd" data-fid="hd" data-handled aria-expanded="${S.handledOpen}" aria-controls="hd-b"><span class="hd-ic">${ICON.check}</span><span class="hd-t"><b>Handled</b> · ${bits.join(" · ")}</span>${w || held.length ? ICON.chevron : ""}</button>`);
-  const evening = NIGHT.phase === "evening";
-  patch($("#hd-eod"), !DEMO ? "" : `<button type="button" class="eod-btn${evening ? " is-due" : ""}" data-fid="eod" data-eod aria-expanded="${S.eodOpen}" aria-controls="eod-b" title="Queue tonight's work, then seal the day">${ICON.moon}<span>${evening ? "Before you go" : "End the day"}</span></button>`);
   if (S.handledOpen) patch($("#hd-in"), handledListHtml(P0, working));
-  if (S.eodOpen) patch($("#eod-in"), eodHtml(P0));
 }
 function handledListHtml(P0, working) {
   const rows = working.slice().sort((a, b) => a.project.localeCompare(b.project)).map((t) => {
     const c = t.checklist, cur = c.items.find((i) => i.state === "doing");
-    return `<li><button type="button" class="hd-r" data-go="t:${esc(t.id)}"><span class="hd-p">${esc(PROJ(t.project))}</span><span class="hd-tt">${t.planted ? `<span class="pl" title="Queued for tonight">${ICON.moon}</span>` : ""}${esc(t.title)}</span><span class="hd-now">${cur ? esc(cur.text) : ""}</span><span class="mini" aria-label="${c.done} of ${c.total}"><i style="--p:${c.total ? c.done / c.total : 0}"></i></span></button></li>`;
+    return `<li><button type="button" class="hd-r" data-go="t:${esc(t.id)}"><span class="hd-p">${esc(PROJ(t.project))}</span><span class="hd-tt">${esc(t.title)}</span><span class="hd-now">${cur ? esc(cur.text) : ""}</span><span class="mini" aria-label="${c.done} of ${c.total}"><i style="--p:${c.total ? c.done / c.total : 0}"></i></span></button></li>`;
   }).join("");
   const wait = P0.held.map((n) => `<li class="cw"><span class="cw-main"><span class="cw-t">${askTitle(n)}</span><span class="cw-why">${esc(PROJ(n.t.project))} · ${esc(n.heldWhy)}</span></span><button type="button" class="cw-in" data-bring-in="${esc(n.key)}">Bring in</button></li>`).join("");
   return (rows ? `<ul class="hd-ul">${rows}</ul>` : "") + (wait ? `<h3 class="hd-k">Can wait</h3><ul class="cw-ul">${wait}</ul>` : "");
-}
-
-/** Before you go: queue tonight's work, then seal. One moment, at the day boundary. */
-function eodHtml(P0) {
-  const f = NIGHT.forecast();
-  const seeds = NIGHT.seeds().slice(0, 3);
-  const full = f.slotsLeft <= 0;
-  const ships = f.ships.length;
-  return `<div class="eod-card"><header class="eod-h"><span class="eod-ic">${ICON.moon}</span><div><h2 id="eod-h">Before you go</h2><p>Queue up to three things to run overnight. You'll see what got done in the morning.</p></div></header>` +
-    `<ul class="seeds">${seeds.map((s) => `<li><button type="button" class="seed${s.planted ? " is-on" : ""}" data-plant="${s.id}" aria-pressed="${s.planted}"${!s.planted && full ? " disabled" : ""}>` +
-      `<span class="sd-ic">${s.planted ? ICON.check : ICON.plus}</span><span class="sd-t">${esc(s.title)}</span><span class="sd-p">${esc(PROJ(s.project))}</span><span class="sd-act">${s.planted ? "Queued" : "Queue for tonight"}</span></button></li>`).join("")}</ul>` +
-    `<div class="fc"><p class="fc-l"><span>By morning</span><b>${f.e ? `about ${f.lo}–${f.hi} steps` : "nothing planned"}</b>${ships ? `<span class="fc-s">· ${low(ships)} likely to finish</span>` : ""}<em>estimate</em></p>` +
-    (f.gain ? `<button type="button" class="fc-gain" data-gain>${ICON.arrow}<span>Answer ${f.gainAsks.length === 1 ? "one ask" : `${low(f.gainAsks.length)} asks`} first and about ${f.gain} more steps can run</span></button>` : "") + `</div>` +
-    `<footer class="eod-f"><button type="button" class="b b-seal" data-seal><span class="b-l">${ICON.moon}Seal the day</span></button><span class="eod-t">Notifications stay quiet until 9:00. Asks wait safely.</span></footer></div>`;
-}
-
-/** Night: the page goes still. The forecast you saw is the one that's sealed. */
-function homeNight(needs) {
-  $("#home").classList.add("is-night");
-  for (const id of ["#hm-next", "#hm-then", "#hm-finds"]) { patch($(id), ""); $(id)._key = null; }
-  $("#hm-end").innerHTML = ""; $("#hm-end")._built = false; $("#hm-end")._h = null;
-  const sl = NIGHT.sealed;
-  const f = sl.forecast;
-  const working = world.state.threads.filter(isBusy).length;
-  const queued = world.state.threads.filter((t) => t.planted && t.state !== "done");
-  const held = needs.length;
-  const until = clock(sl.until);
-  patch($("#hm-moment"), `<section class="night" aria-labelledby="night-h"><div class="night-mark">${ICON.moon}</div>` +
-    `<h2 id="night-h">Nothing needs you until morning.</h2><p class="night-p">Sealed until ${esc(until)}. Close the lid; the agents keep working.</p>` +
-    `<dl class="night-l"><div><dt>By morning</dt><dd>about ${f.lo}–${f.hi} steps <em>estimate</em></dd></div><div><dt>Working</dt><dd>${working} ${plural(working, "agent")}</dd></div>` +
-    (queued.length ? `<div><dt>Queued</dt><dd>${queued.map((t) => esc(t.title)).join(" · ")}</dd></div>` : "") +
-    (held ? `<div><dt>Waiting</dt><dd>${held} ${plural(held, "ask")}, held safely</dd></div>` : "") + `</dl>` +
-    `<div class="night-f"><button type="button" class="b b-sm b-back" data-morning data-fid="morning"><span class="b-l">${ICON.sun}See the morning<small>demo</small></span></button><button type="button" class="nx-link" data-unseal data-fid="unseal">Unseal</button></div></section>`);
-}
-
-/** The morning recap: what happened against what was forecast, from real state. */
-function morningHtml(h) {
-  const f = h.forecast;
-  const verdict = h.verdict === "in" ? "in the forecast" : h.verdict === "above" ? "above the forecast" : "below the forecast";
-  const lines = [];
-  const sh = h.shipped.slice().sort((x, y) => (y.planted ? 1 : 0) - (x.planted ? 1 : 0));
-  if (sh.length) lines.push(`<li><span class="mr-ic is-ok">${ICON.check}</span><span class="mr-t"><button type="button" class="mr-a" data-go="t:${esc(sh[0].tid)}">${esc(sh[0].title)}</button>${sh.length > 1 ? ` and ${low(sh.length - 1)} more` : ""} finished</span>${sh[0].planted ? `<span class="mr-tag">queued by you</span>` : ""}</li>`);
-  const rc = h.receipts.find((r) => r.steps >= 2 || r.shipped);
-  if (rc) lines.push(`<li title="An estimate: steps moved × a typical step time"><span class="mr-ic is-you">${ICON.spark}</span><span class="mr-t">Your answer on <b>${esc(rc.title)}</b> moved about ${Math.max(1, Math.round(rc.hours))} h of agent work</span></li>`);
-  // only what really waits on you now
-  const waiting = h.paused.filter((p) => { const t = world.thread(p.tid); return t && WAITING(t.state) && D.needItems().some((n) => n.t.id === t.id && n.admitted); });
-  for (const p of waiting.slice(0, 1)) lines.push(`<li><span class="mr-ic is-ask"><i class="dia"></i></span><span class="mr-t"><b>${esc(p.title)}</b> has a question for you</span></li>`);
-  const extra = FV.overflow().slice(0, 1);
-  const find = extra.length ? `<ul class="fd-list mr-finds">${extra.map((x) => FV.rowHtml(x, PROJ)).join("")}</ul>` : "";
-  return `<section class="morning" aria-labelledby="mr-h"><header class="mr-h"><span class="mr-sun">${ICON.sun}</span><h2 id="mr-h">${h.nights > 1 ? `While you were away · ${h.nights} nights` : "Last night"}</h2><button type="button" class="mr-x" data-morning-done aria-label="Fold the recap" title="Got it">${ICON.close}</button></header>` +
-    `<div class="mr-top"><p class="mr-big"><b class="tick" data-to="${h.steps}">${h.steps}</b> steps done</p><div class="mr-vs"><p>${verdict} <span>(${f.lo}–${f.hi})</span></p>${rangeBar(f.lo, f.hi, h.steps)}</div></div>` +
-    (lines.length ? `<ul class="mr-list">${lines.join("")}</ul>` : "") + find + `</section>`;
-}
-function rangeBar(lo, hi, actual) {
-  const max = Math.max(hi, actual ?? 0, 4) * 1.25;
-  const pct = (v) => `${Math.min(100, (v / max) * 100).toFixed(1)}%`;
-  return `<div class="rb" aria-hidden="true"><i class="rb-band" style="left:${pct(lo)};width:calc(${pct(hi)} - ${pct(lo)})"></i>${actual != null ? `<i class="rb-mark" style="left:${pct(actual)}"></i>` : ""}</div>`;
-}
-function countUp(el, to) {
-  if (RM.matches) { el.textContent = to; return; }
-  const t0 = performance.now(), dur = 900;
-  const f = (t) => { const k = Math.min(1, (t - t0) / dur); el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(f); };
-  el.textContent = "0"; requestAnimationFrame(f);
 }
 
 /** Decide straight from the Home card (Glance asks). The card stamps, then the next rises; focus lands on the new card. */
@@ -591,95 +427,19 @@ async function nextDecide(choice, note) {
   requestAnimationFrame(() => requestAnimationFrame(() => { const nc = $("#hm-next .next"); if (nc && S.view === "home" && !D.isOpen()) nc.focus({ preventScroll: true }); }));
 }
 
-// ── the end of the day ──────────────────────────────────────────────────────
-function toggleEod(open = !S.eodOpen) {
-  S.eodOpen = open;
-  const box = $("#eod");
-  if (open) { S.handledOpen = false; setHandled(false); patch($("#eod-in"), eodHtml(homeParts())); }
-  $("[data-eod]")?.setAttribute("aria-expanded", String(open));
-  expand(box, $("#eod-b"), open);
-  if (open) setTimeout(() => $("#eod")?.scrollIntoView({ block: "end", behavior: RM.matches ? "auto" : "smooth" }), 340);
-}
 function setHandled(open) {
   S.handledOpen = open;
   if (open) patch($("#hd-in"), handledListHtml(homeParts(), world.state.threads.filter(isBusy)));
   $("[data-handled]")?.setAttribute("aria-expanded", String(open));
   expand($("#handled"), $("#hd-b"), open);
 }
-function queueToggle(id) {
-  const was = NIGHT.seeds().find((s) => s.id === id)?.planted;
-  if (!NIGHT.plant(id)) { announce("Three is the most for one night. Remove one to swap it."); return; }
-  const s = NIGHT.seeds().find((x) => x.id === id);
-  announce(was ? `Removed ${s.title} from tonight.` : `Queued ${s.title} for tonight.`);
-  patch($("#eod-in"), eodHtml(homeParts()));
-}
-async function sealDay() {
-  const needs = D.needItems();
-  const can = NIGHT.canSeal(needs);
-  if (!can.ok) { heraldShow({ kind: "stopped", text: "Can't seal yet", sub: can.why }, 4200); return; }
-  if (D.isOpen()) D.close({ restore: false });
-  if (NIGHT.phase !== "evening") NIGHT.phase = "evening";
-  const body = $("#hm-body");
-  if (!RM.matches && body) await body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: "ease-in", fill: "forwards" }).finished;
-  await NIGHT.endDay();
-  P.sealed = true;
-  S.eodOpen = false; S.handledOpen = false;
-  sound.play("done");
-  announce("Sealed until morning. Nothing will need you before then.");
-  if (S.view !== "home") go("home");
-  render();
-  $("#home").scrollTop = 0; // while the page is faded out: the night card simply appears, nothing slides
-  if (!RM.matches && body) { body.getAnimations().forEach((a) => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: "ease-out" }); }
-  $("#home").focus({ preventScroll: true });
-}
-function unseal() {
-  NIGHT.reopen(); P.sealed = false;
-  announce("Unsealed. Asks can reach you again.");
-  heraldShow({ kind: "calm", text: "Unsealed", sub: "asks can reach you again" }, 3200);
-  render();
-}
-async function toMorning() {
-  if (NIGHT.phase !== "night") return;
-  const body = $("#hm-body");
-  if (!RM.matches && body) await body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: "forwards" }).finished;
-  NIGHT.runNight(1);
-  P.sealed = false;
-  S.pin = null; S.morningOpen = true; NIGHT.seen = false;
-  rendered = null;
-  render();
-  $("#home").scrollTop = 0;
-  if (!RM.matches && body) { body.getAnimations().forEach((a) => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" }); }
-  announce(`Good morning. ${NIGHT.harvest.steps} steps done overnight, ${NIGHT.harvest.shipped.length} finished.`);
-  $("#home").focus({ preventScroll: true }); // focus stays on the page: nothing is pre-selected
-}
-
 // ── conversations ───────────────────────────────────────────────────────────
-function wsSeed() {
-  const y = new Date(T0 - 86400000); y.setHours(17, 42, 0, 0);
-  const yd = y.getTime();
-  const nightly = world.state.threads.find((t) => /nightly/i.test(t.title));
-  return [
-    { id: "ws1", at: yd, who: "you", text: "What shipped across projects this week?" },
-    { id: "ws2", at: yd + 41000, who: "coord", text: "**This week**\n\n- **billing-api**: Stripe SDK v12 is in; the suite is green.\n- **marketing-site**: 1.2 MB of unused CSS removed.\n- **blackhole**: the HTML page is finished." },
-    { id: "ws3", at: yd + 95000, who: "you", text: "Keep the backfill on hold until I've looked at the cost. And only bring me what's worth it." },
-    { id: "ws4", at: yd + 120000, who: "coord", text: "Will do. I'll bring the asks that unblock the most work, bundle the small ones, and let the rest wait while their agents work around them. Destructive asks and stopped work always reach you." },
-    { id: "ws5", at: T0 - 52 * 60000, who: "you", text: "Why did the nightly job fail?" },
-    { id: "ws6", at: T0 - 51 * 60000, who: "coord", text: "It's the DST change. The schedule asks for 02:00 Berlin time, and on 2026-03-29 that minute didn't exist:\n\n```cron\n0 2 * * *  /opt/etl/nightly.sh --tz Europe/Berlin\n```\n\nI've routed it to **data-pipeline**.", thread: nightly?.id },
-  ];
-}
-let WS_SEED = null;
-const COORD_LINES = [
-  (t) => `On it. I started a thread${t.branch ? ` on \`${t.branch}\`` : ""}.`,
-  (t) => `Starting a thread${t.branch ? ` on \`${t.branch}\`` : ""}. It'll only come to you if it's worth your time.`,
-  (t) => `A thread is on it${t.branch ? ` (\`${t.branch}\`)` : ""}.`,
-];
-
 /** The chat behind a conversation: "ws" → workspace, "p:x" → x (threads use their project). */
 const chatOf = (conv) => (conv === "ws" || conv === "home" ? "workspace" : conv.startsWith("p:") ? conv.slice(2) : convThread(conv)?.project || null);
 const convOfChat = (chat) => (chat === "workspace" ? "ws" : "p:" + chat);
 
-/** Live: the real timeline (workspace or project) or the thread's own messages, with its root first. */
-function liveMessagesOf(conv) {
+/** The real timeline (workspace or project) or the thread's own messages, with its root first. */
+function messagesOf(conv) {
   const out = [];
   const t = convThread(conv);
   const chat = chatOf(conv);
@@ -769,45 +529,6 @@ function liveMessagesOf(conv) {
   return merged;
 }
 
-/** One hop as a quiet line (11 §16.2's labels). Their content stays theirs: we say who, not what. */
-function messagesOf(conv, needs) {
-  if (!DEMO) return liveMessagesOf(conv);
-  const out = [];
-  if (conv === "ws") {
-    WS_SEED = WS_SEED || (DEMO ? wsSeed() : []);
-    out.push(...WS_SEED.map((m) => ({ ...m, key: m.id })));
-  } else if (conv.startsWith("p:")) {
-    const pid = conv.slice(2);
-    const ts = threadsOf(pid).filter((t) => !String(t.id).startsWith("many_")).sort((a, b) => a.createdAt - b.createdAt);
-    ts.forEach((t, i) => {
-      if (DEMO && S.localThread.get(t.id) !== conv) {
-        const req = t.messages.find((m) => m.who === "you");
-        if (req) {
-          out.push({ key: `${t.id}:req`, at: t.createdAt, who: "you", text: req.text });
-          out.push({ key: `${t.id}:start`, at: t.createdAt + (t.createdAt < T0 ? 20000 : 1), who: "coord", text: COORD_LINES[i % 3](t), thread: t.id });
-        } else out.push({ key: `${t.id}:start`, at: t.createdAt, who: "coord", text: "I noticed something worth doing and started a thread.", thread: t.id });
-      }
-      if (t.state === "done") out.push({ key: `${t.id}:done`, at: t.lastAt, who: "event", text: `${t.title} finished`, tone: "ok" });
-      if (t.state === "failed") out.push({ key: `${t.id}:failed`, at: t.lastAt, who: "event", text: `${t.title} stopped: ${String(t.happened || "").replace(/^Stopped:\s*/i, "")}`, tone: "stop" });
-    });
-    for (const d of D.decisions().filter((d) => d.project === pid)) out.push({ key: `dec:${d.id}`, at: d.at, who: "event", text: `You ${d.verb.toLowerCase()} · ${d.said || d.label}${d.fromSug ? " · as suggested" : ""}`, tone: d.choice === "deny" ? "back" : "ok" });
-    for (const d of D.notSent().filter((d) => d.project === pid)) out.push({ key: `dec:${d.id}`, at: d.at, who: "event", text: `Not sent · ${d.said || d.label} · ${d.why}`, tone: "sys" });
-  } else {
-    const t = convThread(conv);
-    if (t) {
-      for (const m of t.messages) {
-        const key = S.alias.get(m.id) || m.id;
-        if (m.who === "agent" && /^✓\s/.test(m.text)) out.push({ key, at: m.at, who: "event", text: m.text.replace(/^✓\s*/, ""), tone: "ok" });
-        else if (m.stopLine) out.push({ key, at: m.at, who: "event", text: m.text, tone: "back" });
-        else out.push({ key, at: m.at, who: m.who === "you" ? "you" : "agent", text: m.text, sent: S.alias.has(m.id) });
-      }
-    }
-  }
-  out.push(...(S.local[conv] || []).filter((m) => !m.merged).map((m) => ({ ...m, key: m.id })));
-  out.sort((a, b) => a.at - b.at);
-  return out;
-}
-
 function threadCardHtml(tid, needs) {
   const t = world.thread(tid);
   if (!t) return "";
@@ -835,7 +556,7 @@ function nameOf(conv, who) {
 
 function msgItems(conv, needs) {
   if (CH.isChats(conv)) return CH.items(conv);
-  const list = messagesOf(conv, needs);
+  const list = messagesOf(conv);
   const items = [];
   let day = "", prev = null;
   const lastYou = [...list].reverse().find((m) => m.who === "you");
@@ -881,7 +602,7 @@ function msgItems(conv, needs) {
       html = `<p class="m-note">${esc(m.text)}</p>`;
     } else if (m.who === "hist") {
       const h = m.h;
-      html = `<div class="day hist" role="separator">${h.loading ? `<span><i class="spin" aria-hidden="true"></i>Loading earlier messages…</span>` : h.all ? `<span>${h.capped ? "Showing the latest 1,000 messages" : "Beginning of the conversation"}</span>` : `<button type="button" class="hist-more" data-older>Earlier messages</button>`}</div>`;
+      html = `<div class="day hist" role="separator">${h.loading ? `<span><i class="spin" aria-hidden="true"></i>Loading earlier messages…</span>` : h.all ? `<span>${h.capped ? "Showing the latest 1,000 messages" : "Beginning of the conversation"}</span>` : h.olderError ? `<span>Couldn't load earlier messages</span><button type="button" class="hist-more" data-older>Try again</button>` : `<button type="button" class="hist-more" data-older>Earlier messages</button>`}</div>`;
     } else if (m.who === "event") {
       html = `<div class="ev ev-${m.tone || "ok"}"><span class="ev-ic">${m.tone === "back" ? ICON.rewind : m.tone === "stop" ? ICON.close : m.tone === "sys" ? ICON.pause : ICON.check}</span><span class="ev-t">${esc(m.text)}</span><time>${clock(m.at)}</time></div>`;
     } else if (m.who === "rec") {
@@ -895,25 +616,24 @@ function msgItems(conv, needs) {
 }
 
 // ── headers: Workspace, project (title + one sentence + the Now shelf), thread (+ checklist) ──
+/** hub #28: the Workspace's overview heads the page, always; the conversation opens on its newest
+ *  message below it, and earlier messages load in between as you scroll up. The title is the top bar's. */
 function wsHeadRender(needs) {
   const box = $("#ws-head");
   if (S.view !== "ws") { box.hidden = true; return; }
   box.hidden = false;
   const P0 = homeParts(needs);
   const working = world.state.threads.filter(isBusy).length;
-  const nd = sealed() ? 0 : P0.active.length;
+  const nd = P0.active.length;
   // GitHub #32: an open thread whose agent sits idle and asks nothing is "Idle", so every open thread counts once
   const asking = new Set(needs.map((n) => n.t.id));
   const idle = world.state.threads.filter((t) => t.state === "working" && !isBusy(t) && !asking.has(t.id)).length;
-  const rs = R.rules();
-  const html = `<div class="wsh"><div class="wsh-mark">${XO}</div><h1 class="wsh-h" id="conv-title">Workspace</h1>` +
+  const html = `<div class="wsh"><div class="wsh-mark">${XO}</div><h2 class="wsh-h">Workspace</h2>` +
     `<p class="wsh-p">Your coordinator, across all ${projects().length} projects.</p>` +
     `<dl class="wsh-stats"><div><dt>Working</dt><dd>${working}</dd></div><div><dt>Need you</dt><dd class="${nd ? "is-amber" : ""}">${nd}</dd></div><div><dt>Can wait</dt><dd>${P0.held.length}</dd></div>${idle ? `<div><dt>Idle</dt><dd>${idle}</dd></div>` : ""}<div><dt>Finished today</dt><dd class="is-green">${doneToday().length}</dd></div></dl>` +
-    (sealed() ? `<p class="wsh-calm">${ICON.moon}Sealed until morning. Ask for anything; nothing will ask you back tonight.</p>`
-      : P0.next ? `<button type="button" class="wsh-next" data-decide="${esc(P0.next.key)}"><span class="nx-glyph">${NEXT_GLYPH}</span><span class="wn-k">Next move</span><span class="wn-t">${askTitle(P0.next)}</span><span class="eff e-${P0.next.effort}">${dial(P0.next.effort)}<b>${EFFORT[P0.next.effort].label}</b></span></button>`
+    (P0.next ? `<button type="button" class="wsh-next" data-decide="${esc(P0.next.key)}"><span class="nx-glyph">${NEXT_GLYPH}</span><span class="wn-k">Next move</span><span class="wn-t">${askTitle(P0.next)}</span><span class="eff e-${P0.next.effort}">${dial(P0.next.effort)}<b>${EFFORT[P0.next.effort].label}</b></span></button>`
       : `<p class="wsh-calm">${ICON.check}Nothing needs you. Ask for anything below.</p>`) +
-    (!DEMO ? "" : `<section class="rules${S.rulesOpen ? " is-open" : ""}" id="rules"><button type="button" class="rl-h" data-rules aria-expanded="${S.rulesOpen}" aria-controls="rl-b">${ICON.rule}<span><b>${rs.length} ${plural(rs.length, "rule")}</b> answered ${R.absorbedTotal()} asks for you</span>${ICON.chevron}</button>` +
-    `<div class="rl-b" id="rl-b"${S.rulesOpen ? "" : " hidden"}><ul class="rl-ul">${rs.map((r) => `<li${r.fresh ? ' class="is-fresh"' : ""}><q>${esc(r.text)}</q><span>${r.absorbed} answered</span></li>`).join("")}</ul></div></section>`) + `</div>`;
+    `</div>`;
   patch(box, html);
 }
 
@@ -921,7 +641,7 @@ function topRender(needs) {
   const v = S.view;
   const t = convThread(v);
   const top = $("#top");
-  top.dataset.kind = v === "ws" ? "ws" : t ? "thread" : "project";
+  top.dataset.kind = t ? "thread" : "project"; // hub #28: the Workspace has a project's header, always shown
   // a thin state line along the thread's header: amber needs you, blue working, green done, red stopped
   top.dataset.state = !t ? "" : needs.some((n) => n.t.id === t.id && n.admitted) ? "need" : t.state === "failed" ? "stop" : isBusy(t) ? "busy" : t.state === "done" || t.state === "resolved" ? "done" : "";
   const back = $("#top-back");
@@ -944,12 +664,22 @@ function topRender(needs) {
     back.title = "Back (Esc)";
   }
   let who, end = "";
-  if (v === "ws") who = `<span class="tw-mini">${XO}</span><span class="tw-t"><b>Workspace</b></span>`;
-  else if (v.startsWith("p:")) {
+  if (v === "ws") {
+    // hub #28: a normal chat's header, like a project's: the counts in one line, what needs you one click away
+    const P0 = homeParts(needs);
+    const nd = P0.active.length;
+    const asking = new Set(needs.map((n) => n.t.id));
+    const working = world.state.threads.filter(isBusy).length;
+    const idle = world.state.threads.filter((x) => x.state === "working" && !isBusy(x) && !asking.has(x.id)).length;
+    const done = doneToday().length;
+    const parts = [nd && `<b class="is-amber">${nd} need${nd === 1 ? "s" : ""} you</b>`, working && `${working} working`, P0.held.length && `${P0.held.length} can wait`, idle && `${idle} idle`, done && `${done} finished today`].filter(Boolean);
+    who = `<span class="tw-ic tw-xo" aria-hidden="true">${XO}</span><span class="tw-t"><h1 id="conv-title">Workspace</h1><span class="pj-s">${parts.join(" · ") || "All quiet"} · across ${projects().length} projects</span></span>`;
+    end = P0.next ? `<button type="button" class="all-btn is-need" data-decide="${esc(P0.next.key)}" title="${esc(askShort(P0.next))}">Next move<span>${nd}</span></button>` : "";
+  } else if (v.startsWith("p:")) {
     const pid = v.slice(2);
     const ts = threadsOf(pid);
     const every = world.state.threads.filter((x) => x.project === pid); // resolved ones too: findable, reopenable
-    const nd = sealed() ? 0 : needs.filter((n) => n.t.project === pid && n.admitted && !n.later).length;
+    const nd = needs.filter((n) => n.t.project === pid && n.admitted && !n.later).length;
     const w = ts.filter(isBusy).length;
     const dn = ts.filter((x) => x.state === "done").length;
     const rs = every.length - ts.length;
@@ -965,7 +695,7 @@ function topRender(needs) {
       ? `<input class="tw-in tw-in-l" id="tw-edit" data-tedit="label" maxlength="32" value="${esc(t.label || "")}" placeholder="A short label" aria-label="Label">`
       : t.label ? `<span class="tw-label" title="Label">${esc(t.label)}</span>` : "";
     const resolved = t.state === "resolved";
-    const acts = !DEMO && world.act.storm ? `<span class="tw-acts"><button type="button" class="tw-act" data-resolve="${esc(t.id)}" data-to="${resolved ? "open" : "resolve"}" title="${resolved ? "Reopen it: its agent can pick it up again" : "Mark it resolved: nothing more is owed"}">${resolved ? ICON.retry : ICON.check}<span>${resolved ? "Reopen" : "Resolve"}</span></button>` +
+    const acts = world.act.storm ? `<span class="tw-acts"><button type="button" class="tw-act" data-resolve="${esc(t.id)}" data-to="${resolved ? "open" : "resolve"}" title="${resolved ? "Reopen it: its agent can pick it up again" : "Mark it resolved: nothing more is owed"}">${resolved ? ICON.retry : ICON.check}<span>${resolved ? "Reopen" : "Resolve"}</span></button>` +
       `<button type="button" class="tw-act tw-more" data-tmenu="${esc(t.id)}" aria-haspopup="menu" aria-expanded="${S.tMenu === t.id}" title="Rename or label" aria-label="Rename or label">${ICON.edit}</button>` +
       (S.tMenu === t.id ? `<span class="tw-menu" role="menu"><button type="button" role="menuitem" data-tfield="title">Rename</button><button type="button" role="menuitem" data-tfield="label">${t.label ? "Change label" : "Add a label"}</button>${t.label ? `<button type="button" role="menuitem" data-tfield="clear-label">Remove the label</button>` : ""}</span>` : "") + `</span>` : "";
     who = `${title}${label}<span class="badge st-${t.state}"><i class="g g-${glyphOf(t)}" aria-hidden="true"></i>${wordOf(t)}</span>${acts}`;
@@ -987,7 +717,7 @@ function nowRender(needs) {
   const pid = v.startsWith("p:") ? v.slice(2) : null;
   if (!pid) { wrap.hidden = true; return; }
   const ts = threadsOf(pid);
-  const need = (t) => (sealed() ? null : needs.find((x) => x.t.id === t.id && x.admitted && !x.later));
+  const need = (t) => needs.find((x) => x.t.id === t.id && x.admitted && !x.later);
   const rankT = (t) => (need(t) ? 0 : t.state === "failed" ? 1 : t.state === "working" ? 2 : 9);
   const shelf = ts.filter((t) => rankT(t) < 9).sort((a, b) => rankT(a) - rankT(b) || b.lastAt - a.lastAt);
   wrap.hidden = !shelf.length;
@@ -1044,7 +774,7 @@ function checklistRender(needs) {
   else if (n && WAITING(t.state)) { mode = "needs"; nowHtml = `<span class="ck-m is-amber">◆</span><span>Paused on you</span>`; }
   else if (t.state === "failed") { mode = "failed"; nowHtml = `<span class="ck-m is-red">■</span><span>Stopped at “${esc(cur ? cur.text : "a step")}”</span>`; }
   else if (c.done >= c.total) { mode = "done"; nowHtml = `<span class="ck-m is-ok">${ICON.check}</span><span>All ${c.total} steps done</span>`; }
-  else if (t.state === "resolved") { mode = "done"; nowHtml = `<span class="ck-m">■</span><span>${DEMO ? "Stopped by you" : "Resolved"} at ${c.done} of ${c.total}</span>`; }
+  else if (t.state === "resolved") { mode = "done"; nowHtml = `<span class="ck-m">■</span><span>Resolved at ${c.done} of ${c.total}</span>`; }
   else nowHtml = `<span class="ck-m is-blue">✱</span><span>${esc(cur ? cur.text : "Working")}</span>`;
   const segs = c.items.map((i, k) => `<i class="sg s-${i.state}${fresh && k === c.done - 1 ? " is-pop" : ""}"></i>`).join("");
   const list = c.items.map((i) => `<li class="ck ck-${i.state}"><span class="ck-m" aria-hidden="true">${i.state === "done" ? "✓" : i.state === "doing" ? "✱" : "○"}</span><span>${esc(i.text)}</span><span class="sr-only">, ${i.state === "doing" ? "in progress" : i.state}</span></li>`).join("");
@@ -1060,7 +790,7 @@ function checklistRender(needs) {
 const LIVE_RUN = (r) => r.state === "running" || r.state === "waiting";
 const runsAsked = new Map(); // session → the working count its runs were last listed for
 function runsStrip(t) {
-  if (DEMO || !t.sessionId || !world.state.runs) return "";
+  if (!t.sessionId || !world.state.runs) return "";
   const mine = [...world.state.runs.values()].filter((r) => r.session === t.sessionId && !r.hidden);
   const live = mine.filter((r) => LIVE_RUN(r) && (r.depth || 1) === 1);
   // after a reload the stream hasn't named the runs still working: the thread's counts know, so list them
@@ -1209,7 +939,7 @@ function dockRender(needs) {
   if (tdock._ch) { tdock._ch = ""; tdock.innerHTML = ""; TD.key = null; }
   if (S.view === "chats") { if (TD.key) { TD.key = null; tdock.innerHTML = ""; } return; }
   const t = convThread(S.view) || (S.view.startsWith("c:") ? (world.state.hosts || []).find((h) => h.id === `session:${S.view.slice(2)}`) : null);
-  const n = t && !D.isOpen() && !sealed() ? needs.find((x) => x.t.id === t.id && !x.later && (x.admitted || x.held)) : null;
+  const n = t && !D.isOpen() ? needs.find((x) => x.t.id === t.id && !x.later && (x.admitted || x.held)) : null;
   // Folded: the person chose to read the thread first. The ask waits as one slim line, and the
   // conversation isn't dimmed. A new ask on this thread docks open again.
   const folded = !!(n && S.dockFold[n.key]);
@@ -1259,7 +989,8 @@ function dockRender(needs) {
         const e = D.decisions()[0];
         const verb = e && e.verb === "Answered" ? `Answered “${e.said}”` : e ? e.verb : "Done";
         morph(frame, () => { frame.className = "card is-dock r-done"; frame.innerHTML = `<p class="tp-done${how === "back" ? " is-back" : ""}" role="status"><span class="tp-done-ic">${how === "back" ? ICON.rewind : ICON.check}</span><span><b>${esc(verb)}.</b> ${how === "back" ? "It's taking another route." : "It's back at work."}</span><button type="button" class="tp-done-u" data-dock-undo>Undo</button></p>`; }, { duration: 300 });
-        await wait(2200);
+        // the only Undo for this decision now: it stays for the whole 3 s window
+        await wait(RM.matches ? 3000 : 2700);
       }
       TD.busy = false;
       TD.key = "__settling";
@@ -1287,20 +1018,18 @@ function typingRender() {
   const box = $("#typing");
   const t = convThread(S.view);
   let html = "";
-  const chat = !DEMO && !t && S.view !== "home" ? chatOf(S.view) : null;
+  const chat = !t && S.view !== "home" ? chatOf(S.view) : null;
   if (chat && world.act.replying(chat)) {
-    // live: the coordinator's session really works, or our message still waits for its answer (never a timer)
+    // the coordinator's session really works, or our message still waits for its answer (never a timer)
     const aw = world.state.awaiting[chat];
     const who = S.view === "ws" ? "The coordinator" : `${esc(PROJ(chat))} coordinator`;
     const doing = world.act.doing ? world.act.doing(chat) : null;
     html = `<div class="typing" role="status"><div class="av av-w">${XO}</div><div class="ty-b"><span class="shimmer">${who} is ${aw ? "replying" : "working"}${doing ? ` · ${esc(doing.replace(/`/g, ""))}` : ""}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>${aw ? `<span class="elapsed" data-since="${aw.at}"></span>` : ""}</div></div>`;
-  } else if (!DEMO && S.view.startsWith("c:")) {
+  } else if (S.view.startsWith("c:")) {
     const sid = S.view.slice(2), tu = world.state.turns && world.state.turns.running(sid);
     if (CH.working(S.view) && !(tu && world.state.turns.blocksOf(tu).length)) html = `<div class="typing" role="status"><div class="av av-t av-w">${ICON.thread}</div><div class="ty-b"><span class="shimmer">Working</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>`;
-  } else if (!DEMO && t && t.sessionId && world.state.turns && world.state.turns.running(t.sessionId) && world.state.turns.blocksOf(world.state.turns.running(t.sessionId)).length) {
+  } else if (t && t.sessionId && world.state.turns && world.state.turns.running(t.sessionId) && world.state.turns.blocksOf(world.state.turns.running(t.sessionId)).length) {
     html = ""; // its running turn shows the work itself
-  } else if (S.typing[S.view]) {
-    html = `<div class="typing" role="status"><div class="av av-w">${XO}</div><div class="ty-b"><span class="shimmer">${S.view === "ws" ? "The coordinator" : `${esc(PROJ(convProject(S.view)))} coordinator`} is replying</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>`;
   } else if (t && isBusy(t)) {
     const cur = t.checklist.items.find((i) => i.state === "doing");
     html = `<div class="typing" role="status"><div class="av av-t av-w">${ICON.thread}</div><div class="ty-b"><span class="shimmer">Working${cur ? ` · ${esc(cur.text)}` : ""}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="elapsed" data-since="${t.lastAt}"></span></div></div>`;
@@ -1314,7 +1043,7 @@ function tickElapsed() { for (const el of $$(".elapsed[data-since]")) el.textCon
 setInterval(tickElapsed, 1000);
 
 // ── the dock line: one calm labelled line (no glow on the composer, ever) ───
-const OWN = new Set(["sent", "started", "ready", "clear", "rec", "rule", "halt"]);
+const OWN = new Set(["sent", "started", "ready", "clear", "rec", "halt"]);
 // Lines waiting for an Undo on screen to end: an Undo is never pushed out of reach by a newer line.
 const HQ = [];
 function heraldShow(h, ms = 4200) {
@@ -1359,19 +1088,19 @@ function heraldRender(needs) {
   const h = S.herald && S.herald.until > Date.now() ? S.herald : null;
   let html;
   if (h) {
-    const ic = h.kind === "stopped" ? `<span class="hr-ic k-stopped">${ICON.close}</span>` : h.kind === "sent" ? `<i class="dash" aria-hidden="true"></i>` : h.kind === "ping" ? `<span class="hr-ic k-ping"><i class="hr-dot"></i></span>` : h.kind === "calm" || h.kind === "halt" ? `<span class="hr-ic k-calm">${h.kind === "halt" ? STOP_ICON : ICON.pause}</span>` : h.kind === "rule" ? `<span class="hr-ic k-ok">${ICON.rule}</span>` : h.kind === "rec" ? `<span class="hr-ic k-calm">${ICON.router}</span>` : `<span class="hr-ic k-ok">${ICON.check}</span>`;
+    const ic = h.kind === "stopped" ? `<span class="hr-ic k-stopped">${ICON.close}</span>` : h.kind === "sent" ? `<i class="dash" aria-hidden="true"></i>` : h.kind === "ping" ? `<span class="hr-ic k-ping"><i class="hr-dot"></i></span>` : h.kind === "calm" || h.kind === "halt" ? `<span class="hr-ic k-calm">${h.kind === "halt" ? STOP_ICON : ICON.pause}</span>` : h.kind === "rec" ? `<span class="hr-ic k-calm">${ICON.router}</span>` : `<span class="hr-ic k-ok">${ICON.check}</span>`;
     const inner = `${ic}<span class="hr-t">${esc(h.text)}</span>${h.sub ? `<span class="hr-s">${esc(h.sub)}</span>` : ""}${h.open ? `<span class="hr-go">Open ${ICON.arrow}</span>` : h.decide ? `<span class="hr-go">Look ${ICON.arrow}</span>` : ""}`;
     html = h.open ? `<button type="button" class="hr hr-ev k-${h.kind}" data-go="${esc(h.open)}" data-hn="${h.n}">${inner}</button>`
       : h.decide ? `<button type="button" class="hr hr-ev k-${h.kind}" data-decide="${esc(h.decide)}" data-hn="${h.n}">${inner}</button>`
       : h.undo ? `<div class="hr hr-ev has-undo k-${h.kind}" data-hn="${h.n}">${inner}<button type="button" class="hr-undo" data-herald-undo>${esc(h.undoLabel || "Undo")}</button></div>`
       : `<div class="hr hr-ev k-${h.kind}" data-hn="${h.n}">${inner}</div>`;
-  } else if (!DEMO && connLine(world.state)) {
-    // live: an honest, persistent line when XO can't be reached, can't run, or waits on a limit (P0-8)
+  } else if (connLine(world.state)) {
+    // an honest, persistent line when XO can't be reached, can't run, or waits on a limit (P0-8)
     const c = connLine(world.state);
     html = `<div class="hr hr-conn k-${c.kind}" role="status"><span class="hr-ic ${c.kind === "down" ? "k-stopped" : "k-calm"}">${c.kind === "down" ? ICON.retry : ICON.pause}</span><span class="hr-t">${esc(c.text)}</span><span class="hr-s">${esc(c.sub)}</span></div>`;
-  } else if (S.view === "home" || convThread(S.view) || sealed()) html = "";
+  } else if (S.view === "home" || convThread(S.view)) html = "";
   else {
-    // Only when something is worth your time. The quiet states ("Nothing needs you", "Sealed")
+    // Only when something is worth your time. The quiet state ("Nothing needs you")
     // are already said by the sidebar's Home row and by Home, so no line sits here for them.
     const P0 = homeParts(needs);
     const nd = P0.active.length;
@@ -1425,13 +1154,6 @@ function chipRender(fade = false) {
 
 // ── the composer: send, or Stop while something runs ───────────────────────
 const say = $("#say"), atList = $("#at-list");
-function parseTarget(text) {
-  const m = text.match(/(^|\s)@([\w.-]+)/);
-  if (!m) return null;
-  const q = m[2].toLowerCase();
-  const p = world.state.projects.find((x) => x.id.toLowerCase() === q || x.name.toLowerCase() === q);
-  return p ? p.id : null;
-}
 function growSay() {
   say.style.height = "auto";
   const h = say.scrollHeight;
@@ -1440,22 +1162,16 @@ function growSay() {
 }
 /** What would Stop stop here? The coordinator replying, or this thread's agent working. */
 function running() {
-  if (!DEMO) {
-    // live: a thread whose session works, or the coordinator of this chat while it works
-    // nothing more to stop where a Stop waits out its Undo or is on its way, or the session is stopping
-    const live = (run) => (run && !S.stops.has(run.session) && world.act.sessionState(run.session) !== "stopping" ? run : null);
-    const t = convThread(S.view);
-    if (t) return t.busy && t.sessionId ? live({ kind: "thread", t, session: t.sessionId }) : null;
-    if (S.view.startsWith("c:")) return CH.busy(S.view) ? live({ kind: "chat", session: S.view.slice(2) }) : null;
-    if (S.view === "chats") return null;
-    const chat = chatOf(S.view);
-    const sid = chat && world.act.coordinatorBusy ? world.act.coordinatorBusy(chat) : null;
-    return sid ? live({ kind: "coord", conv: S.view, session: sid }) : null;
-  }
-  if (S.typing[S.view]) return { kind: "coord", conv: S.view };
+  // a thread whose session works, or the coordinator of this chat while it works
+  // nothing more to stop where a Stop waits out its Undo or is on its way, or the session is stopping
+  const live = (run) => (run && !S.stops.has(run.session) && world.act.sessionState(run.session) !== "stopping" ? run : null);
   const t = convThread(S.view);
-  if (t && t.state === "working") return { kind: "thread", t };
-  return null;
+  if (t) return t.busy && t.sessionId ? live({ kind: "thread", t, session: t.sessionId }) : null;
+  if (S.view.startsWith("c:")) return CH.busy(S.view) ? live({ kind: "chat", session: S.view.slice(2) }) : null;
+  if (S.view === "chats") return null;
+  const chat = chatOf(S.view);
+  const sid = chat && world.act.coordinatorBusy ? world.act.coordinatorBusy(chat) : null;
+  return sid ? live({ kind: "coord", conv: S.view, session: sid }) : null;
 }
 function sendRender() {
   const btn = $("#send");
@@ -1487,8 +1203,8 @@ function updateComposer() {
     sendRender(); growSay(); atList.hidden = true;
     return;
   }
-  const tg = DEMO ? null : targetOf(say.value, world.state.projects);
-  const pid = DEMO ? parseTarget(say.value) : tg.pid;
+  const tg = targetOf(say.value, world.state.projects);
+  const pid = tg.pid;
   const t = convThread(S.view);
   const block = liveBlock();
   let html;
@@ -1582,7 +1298,7 @@ $("#target").addEventListener("click", () => {
 /** "Send now": its own toggle, shown in a chat whose turn is running where the agent can be interrupted. */
 function sendNowRender() {
   const b = $("#send-now");
-  const st = !DEMO && CH.isChats(S.view) && !liveBlock() ? CH.nowState(S.view) : null;
+  const st = CH.isChats(S.view) && !liveBlock() ? CH.nowState(S.view) : null;
   b.hidden = !st;
   if (st) { b.setAttribute("aria-pressed", String(st.on)); b.classList.toggle("is-on", st.on); }
 }
@@ -1648,29 +1364,7 @@ function stopsHerald() {
 /** Stop: the run halts honestly; what's done is kept and said so. */
 function stopRun() {
   const run = running();
-  if (!run) return;
-  if (!DEMO) { stopLive(run); return; }
-  if (run.kind === "coord") {
-    S.stopped[run.conv] = true;
-    delete S.typing[run.conv];
-    heraldShow({ kind: "halt", text: "Stopped", sub: "nothing was started" }, 3600);
-    announce("Stopped. The coordinator didn't start anything.");
-  } else {
-    const t = run.t;
-    const cur = t.checklist.items.find((i) => i.state === "doing") || t.checklist.items.find((i) => i.state === "todo");
-    const at = Date.now();
-    t.state = "needs_reply";
-    t.asks = [{ id: `stop_${t.id}_${at}`, kind: "question", title: `You stopped it at “${cur ? cur.text : "this step"}”. Continue, or end here?`, detail: `${t.checklist.done} of ${t.checklist.total} steps are done and kept.`, risk: "routine", options: ["Continue", "Stop here"], stopByYou: true }];
-    t.needsYou = t.asks[0].title;
-    t.checklist = { ...t.checklist, items: t.checklist.items.map((i) => (i.state === "doing" ? { ...i, state: "todo" } : i)), doing: 0 };
-    t.messages.push({ id: `stopm_${at}`, at, who: "agent", text: `Stopped by you. Nothing after “${cur ? cur.text : "the last step"}” ran; ${t.checklist.done} of ${t.checklist.total} steps are kept.`, stopLine: true });
-    t.lastAt = at;
-    waitSince.set(t.id, at);
-    heraldShow({ kind: "halt", text: "Stopped", sub: `${t.checklist.done} of ${t.checklist.total} steps kept` }, 3600);
-    announce(`Stopped. ${t.checklist.done} of ${t.checklist.total} steps are kept. Continue or end it below.`);
-  }
-  sound.play("back");
-  schedule();
+  if (run) stopLive(run);
 }
 
 function lift(el, from) {
@@ -1680,9 +1374,8 @@ function lift(el, from) {
   b.animate([{ transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(.98)`, opacity: 0.55 }, { transform: "none", opacity: 1 }], { duration: 320, easing: "cubic-bezier(.2,.9,.25,1.06)" });
 }
 
-/** Live: why sending is paused right now, or "" (classic composerBlock, in plain words). */
+/** Why sending is paused right now, or "" (classic composerBlock, in plain words). */
 function liveBlock() {
-  if (DEMO) return CH.isChats(S.view) ? "Chats run in Live" : "";
   if (CH.isChats(S.view)) return CH.blocked(S.view) || sendBlock(world.state, { timeline: false });
   const t = convThread(S.view);
   const toThread = !!t && !/(^|\s)@[\w.-]+/.test(say.value);
@@ -1713,7 +1406,7 @@ function sendLive(raw) {
   deliverLive(m, thread);
 }
 
-/** Live: the server's row replaces the optimistic one (same bubble, never twice); errors keep the text. */
+/** The server's row replaces the optimistic one (same bubble, never twice); errors keep the text. */
 async function deliverLive(m, thread) {
   m.status = "sending"; delete m.err;
   try {
@@ -1740,71 +1433,15 @@ function send() {
     CH.send(S.view, text);
     return;
   }
-  if (!DEMO) { sendLive(raw); return; }
-  const pid = parseTarget(raw);
-  const text = raw.replace(/(^|\s)@[\w.-]+\s?/, "$1").trim();
-  if (!text) return;
-  const fromHome = S.view === "home";
-  const conv = fromHome ? (pid ? "p:" + pid : "ws") : S.view;
-  const t = convThread(conv);
-  const from = say.getBoundingClientRect();
-  const m = { id: `l${++S.n}_${Date.now().toString(36)}`, conv, at: Date.now(), who: "you", text, status: "sending", target: pid || (t ? null : convProject(conv)) };
-  (S.local[conv] = S.local[conv] || []).push(m);
-  say.value = ""; saveDraft(); updateComposer();
-  const btn = $("#send"); btn.classList.remove("fired"); void btn.offsetWidth; btn.classList.add("fired");
-  sound.play("send");
-  if (fromHome) heraldShow({ kind: "sent", text: `Sent to ${m.target === "workspace" ? "the coordinator" : PROJ(m.target)}`, sub: "waiting for a thread" }, 9000);
-  else { render(); toBottom(false); lift(msgsEl.querySelector(`[data-k="${m.id}"]`), from); }
-  deliver(m, t && !pid ? t : null, fromHome);
+  sendLive(raw);
 }
 
-async function deliver(m, thread, fromHome) {
-  if (!DEMO) return deliverLive(m, thread);
-  const conv = m.conv;
-  if (DEMO) await wait(360);
-  if (DEMO && /#fail\b/i.test(m.text)) { m.status = "failed"; schedule(); announce("Message not sent. Retry or edit."); if (fromHome) heraldShow({ kind: "stopped", text: "Not sent", sub: "open the conversation to retry", open: conv }, 6000); return; }
-  if (thread) {
-    try {
-      await world.act.reply(thread.id, m.text);
-      const mine = [...thread.messages].reverse().find((x) => x.who === "you" && x.text === m.text);
-      if (mine) { S.alias.set(mine.id, m.id); m.merged = true; }
-      m.status = "sent";
-    } catch { m.status = "failed"; }
-    schedule();
-    return;
-  }
-  m.status = "sent"; m.waiting = true; S.typing[conv] = Date.now(); delete S.stopped[conv];
-  const setup = IQ.routed(conv, m.text);
-  schedule();
-  announce(`Sent to ${m.target === "workspace" ? "the coordinator" : PROJ(m.target)}. Waiting for a thread.`);
-  if (DEMO) await wait(2600);
-  if (S.stopped[conv]) {
-    m.waiting = false; delete S.stopped[conv];
-    (S.local[conv] = S.local[conv] || []).push({ id: `l${++S.n}_x`, conv, at: Date.now(), who: "coord", text: "Stopped. I didn't start anything; your message is kept above if you want to send it again.", iq: setup });
-    schedule();
-    return;
-  }
-  try {
-    const nt = await world.act.ask(m.target || "workspace", m.text);
-    m.waiting = false; delete S.typing[conv];
-    if (nt && nt.id) {
-      m.threadId = nt.id;
-      S.localThread.set(nt.id, conv);
-      const here = conv === "p:" + nt.project;
-      const spawn = IQ.spawnSetup(nt.id);
-      (S.local[conv] = S.local[conv] || []).push({ id: `l${++S.n}_r`, conv, at: Date.now(), who: "coord", text: (here ? "On it. I started a thread for this." : `Routed to **${PROJ(nt.project)}**. A thread is on it.`) + ` The router chose ${spawn.name} ${spawn.pips} for it.`, threadId: nt.id, iq: setup });
-      announce(`Started a thread in ${PROJ(nt.project)}: ${nt.title}`);
-      if (fromHome || S.view !== conv) heraldShow({ kind: "started", text: `Thread started: ${nt.title}`, sub: PROJ(nt.project), open: "t:" + nt.id }, 7000);
-    }
-  } catch { m.waiting = false; delete S.typing[conv]; m.status = "failed"; }
-  schedule();
-}
 function retry(id) {
   for (const list of Object.values(S.local)) {
     const m = list.find((x) => x.id === id);
     if (m) {
-      if (!DEMO && liveBlock()) { announce(`Not sent: ${liveBlock()}.`); return; }
-      m.status = "sending"; if (DEMO) m.text = m.text.replace(/\s*#fail\b/i, ""); schedule(); deliver(m, convThread(m.conv) && !m.target ? convThread(m.conv) : null); return;
+      if (liveBlock()) { announce(`Not sent: ${liveBlock()}.`); return; }
+      m.status = "sending"; schedule(); deliverLive(m, convThread(m.conv) && !m.target ? convThread(m.conv) : null); return;
     }
   }
 }
@@ -1819,19 +1456,20 @@ function editFailed(id) {
 
 // ── render ──────────────────────────────────────────────────────────────────
 const scroller = $("#scroller"), msgsEl = $("#msgs");
+// the oldest message on screen; day lines don't count, since older messages of the same day land below theirs
+const FIRST_MSG = "[data-k]:not([data-k=hist]):not([data-k=note]):not([data-k^='day|'])";
 let rendered = null, raf = 0;
 function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); }
 const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
 function toBottom(smooth) { scroller.scrollTo({ top: scroller.scrollHeight, behavior: smooth && !RM.matches ? "smooth" : "auto" }); }
 
 function render() {
-  if (!world.state.loaded || S.booting) return;
+  if (!world.state.loaded) return;
   const needs = D.needItems();
   pings(needs);
   const v = S.view;
   const isHome = v === "home";
   $("#app").dataset.view = isHome ? "home" : v === "ws" ? "ws" : v.startsWith("t:") || v.startsWith("c:") ? "thread" : "project";
-  document.body.classList.toggle("sealed", sealed());
   $("#home").hidden = !isHome;
   $("#conv").hidden = isHome;
   const pbt = isHome ? "Home" : "";
@@ -1842,33 +1480,31 @@ function render() {
     topRender(needs);
     wsHeadRender(needs);
     let switching = rendered !== v;
-    if (!DEMO) {
-      // live: the first real fill of a conversation lands quietly and in place, like a view switch
-      const ready = liveReady(v);
-      if (!switching && ready && S.filled !== v) switching = true;
-      S.filled = ready ? v : null;
-    }
+    // the first real fill of a conversation lands quietly and in place, like a view switch
+    const ready = liveReady(v);
+    if (!switching && ready && S.filled !== v) switching = true;
+    S.filled = ready ? v : null;
     const atBottom = switching || nearBottom();
-    const first0 = msgsEl.querySelector("[data-k]:not([data-k=hist]):not([data-k=note])")?.dataset.k;
+    const first0 = msgsEl.querySelector(FIRST_MSG)?.dataset.k;
     const h0 = scroller.scrollHeight, top0 = scroller.scrollTop;
     const added = reconcile(msgsEl, msgItems(v, needs), { quiet: switching });
-    if (!DEMO && !switching && !atBottom && first0 && msgsEl.querySelector("[data-k]:not([data-k=hist]):not([data-k=note])")?.dataset.k !== first0) {
+    if (!switching && !atBottom && first0 && msgsEl.querySelector(FIRST_MSG)?.dataset.k !== first0) {
       // older messages arrived above: keep what you were reading exactly where it was
       scroller.scrollTop = top0 + (scroller.scrollHeight - h0);
     }
-    if (!DEMO) ensureRoot();
+    ensureRoot();
     const typed = typingRender();
     if (switching) {
       rendered = v;
       stuck = true;
       const pos = S.scroll[v];
-      if (v === "ws" && pos == null) { scroller.scrollTop = 0; stuck = false; }
-      else if (pos == null || pos === "bottom") toBottom(false); else scroller.scrollTop = pos;
+      if (pos == null || pos === "bottom") toBottom(false); else scroller.scrollTop = pos;
       $("#new-below").hidden = true;
     } else if (added.length || typed) {
       if (atBottom) toBottom(true); else if (added.length) $("#new-below").hidden = false;
     }
   }
+  if (!isHome) requestAnimationFrame(loadAhead);
   dockRender(needs);
   heraldRender(needs);
   chatTargetRender();
@@ -1876,12 +1512,20 @@ function render() {
   sendRender();
   chipRender();
   D.sync();
-  const nd = sealed() ? 0 : needs.filter((n) => n.admitted && !n.later).length;
-  document.title = sealed() ? "Sealed · XO Space" : Kit.titleFor(nd, "XO Space");
+  const nd = needs.filter((n) => n.admitted && !n.later).length;
+  document.title = Kit.titleFor(nd, "XO Space");
+}
+/** Earlier messages load before you reach them (hub #28). Within about a screen of the top, the next
+ *  page is fetched, and it lands above what you're reading without moving it; a first page too short to
+ *  scroll keeps loading until it fills the view or the conversation begins. */
+function loadAhead() {
+  if (rendered !== S.view || S.view === "home" || convThread(S.view) || CH.isChats(S.view)) return;
+  if (scroller.scrollTop > Math.max(600, scroller.clientHeight)) return;
+  const c = chatOf(S.view); const h = c && world.state.hist[c];
+  if (h && h.loaded && !h.all && !h.loading && !h.olderError) world.act.loadOlder(c);
 }
 scroller.addEventListener("scroll", () => {
-  // live: reaching the top loads earlier messages (the API's newest-N window grows: 40, 80, 160…)
-  if (!DEMO && scroller.scrollTop < 80 && rendered === S.view && !convThread(S.view)) { const c = chatOf(S.view); const h = c && world.state.hist[c]; if (h && !h.all && !h.loading && !h.error) world.act.loadOlder(c); }
+  loadAhead();
   if (nearBottom()) $("#new-below").hidden = true;
   $("#top").classList.toggle("is-scrolled", scroller.scrollTop > 120);
 }, { passive: true });
@@ -1908,8 +1552,6 @@ function go(v, { from, focus = false } = {}) {
   setDrawer(false);
   IQ.close({ restore: false });
   if (v === S.view) { if (focus) say.focus(); return; }
-  // the morning recap is for the first visit: leaving Home folds it
-  if (S.view === "home" && S.morningOpen) { S.morningOpen = false; if (NIGHT.phase === "morning") NIGHT.phase = "day"; }
   const a = document.activeElement;
   const opener = a && a.closest?.("[data-k], .nw");
   if (opener && (opener.closest("#msgs") || opener.closest("#now-wrap"))) S.opener[S.view] = opener.dataset.k || opener.dataset.go;
@@ -1933,16 +1575,15 @@ function go(v, { from, focus = false } = {}) {
   else if (back && target) target.focus({ preventScroll: true });
   else if (!$("#panel").contains(document.activeElement)) (v === "home" ? $("#home") : scroller).focus({ preventScroll: true });
 }
-/** Live: has this conversation's real content arrived (timeline or thread detail)? */
+/** Has this conversation's real content arrived (timeline or thread detail)? */
 function liveReady(v) {
   const t = convThread(v);
   if (t) return t.loaded;
   const h = world.state.hist[chatOf(v)];
   return !!h && !(h.loading && !(world.state.timeline[chatOf(v)] || []).length);
 }
-/** Live: stream the open conversation (the Workspace on Home); poll an open thread's detail. */
+/** Stream the open conversation (the Workspace on Home); poll an open thread's detail. */
 function follow() {
-  if (DEMO) return;
   const v = S.view, t = convThread(v);
   if (CH.isChats(v)) { world.act.watch([]); world.act.watchThread(null); world.act.watchSession?.(v.startsWith("c:") ? v.slice(2) : null); CH.open(v); return; }
   world.act.watchSession?.(null);
@@ -1951,10 +1592,10 @@ function follow() {
   world.act.watch(v === "home" || v === "ws" ? ["workspace"] : v.startsWith("p:") ? [v.slice(2)] : t ? [t.project] : []);
   world.act.watchThread(t ? t.id : null);
 }
-/** Live: an open thread's root request lives on the project timeline; page back until it's there. */
+/** An open thread's root request lives on the project timeline; page back until it's there. */
 function ensureRoot() {
   const t = convThread(S.view);
-  if (DEMO || !t) return;
+  if (!t) return;
   const h = world.state.hist[t.project], tl = world.state.timeline[t.project];
   if (!h || !tl || h.loading || h.all || h.error || tl.some((r) => r.id === t.id)) return;
   S.rootTries = S.rootTries || {};
@@ -2000,11 +1641,11 @@ function openSharedFile(btn) {
   const f = { path: btn.dataset.file, name: btn.dataset.fileName, type: btn.dataset.fileType, bytes: btn.dataset.fileBytes === "" ? null : Number(btn.dataset.fileBytes) };
   const t = convThread(S.view);
   // only a thread's own folder maps to a project route; a plain chat's files have none yet
-  const route = DEMO ? { why: "Files open from live threads. Demo threads don't have real files." } : sharedFileRoute(t, f.path);
+  const route = sharedFileRoute(t, f.path);
   VW.open({ ...f, ...route }, btn);
 }
 
-// ── a thread's own header (live): resolve and reopen with Undo (R1), rename, label ──
+// ── a thread's own header: resolve and reopen with Undo (R1), rename, label ──
 async function resolveThread(tid, resolved, { undo = true } = {}) {
   const t = world.thread(tid);
   if (!t) return;
@@ -2058,14 +1699,12 @@ $("#top").addEventListener("focusout", (e) => {
 // ── clicks ──────────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   const t = e.target;
-  if (t.closest(".uxc") || t.closest("#iq-pop")) return;
+  if (t.closest("#iq-pop")) return;
   const g = t.closest("[data-go]");
   if (g && !t.closest("#all")) { e.preventDefault(); go(g.dataset.go); if (g.dataset.goMsg) showMsg(g.dataset.goMsg); return; }
   const tl = t.closest("a[data-thread]");
   if (tl) { e.preventDefault(); if (world.thread(tl.dataset.thread)) go("t:" + tl.dataset.thread); else heraldShow({ kind: "calm", text: "That thread isn't loaded", sub: "it may be in another project" }, 3200); return; }
   if (t.closest("[data-older]")) { const c = chatOf(S.view); if (c) world.act.loadOlder(c); return; }
-  const rl = t.closest("[data-rule]");
-  if (rl) { decideKey(rl.dataset.rule, { teach: "prefix" }); return; }
   const d = t.closest("[data-decide]");
   if (d) { decideKey(d.dataset.decide); return; }
   if (t.closest("[data-next]")) { openNext(); return; }
@@ -2077,21 +1716,8 @@ document.addEventListener("click", (e) => {
   if (l) { D.laterNow(l.dataset.later); S.pin = null; return; }
   if (t.closest("[data-bring]")) { S.later.clear(); announce("Brought back. They're in today's list again."); schedule(); return; }
   if (t.closest("[data-handled]")) { setHandled(!S.handledOpen); return; }
-  if (t.closest("[data-eod]")) { toggleEod(); return; }
-  const pl = t.closest("[data-plant]");
-  if (pl) { queueToggle(pl.dataset.plant); return; }
-  if (t.closest("[data-gain]")) { const f = NIGHT.forecast(); D.open(f.gainAsks[0]?.key, { only: f.gainAsks.map((n) => n.key) }); return; }
-  if (t.closest("[data-seal]")) { sealDay(); return; }
-  if (t.closest("[data-unseal]")) { unseal(); return; }
-  if (t.closest("[data-morning]")) { toMorning(); return; }
-  if (t.closest("[data-morning-done]")) { const box = $("#hm-moment"); morph($("#hm-body"), () => { S.morningOpen = false; NIGHT.phase = "day"; render(); }, { duration: 320 }); box && announce("Folded the morning recap."); return; }
-  if (t.closest("[data-rules]")) { S.rulesOpen = !S.rulesOpen; const sec = $("#rules"); sec.querySelector(".rl-h").setAttribute("aria-expanded", String(S.rulesOpen)); expand(sec, $("#rl-b"), S.rulesOpen); $("#ws-head")._h = null; return; }
   const bi = t.closest("[data-bring-in]");
   if (bi) { D.bringIn(bi.dataset.bringIn); return; }
-  const fd = t.closest("[data-find]");
-  if (fd) { commissionFind(fd.dataset.find); return; }
-  const fx = t.closest("[data-find-x]");
-  if (fx) { FV.dismiss(fx.dataset.findX); announce("Put aside. It won't come back today."); schedule(); return; }
   const ru = t.closest("[data-rec-undo]");
   if (ru) { undoRecord(ru.dataset.recUndo); return; }
   if (t.closest("[data-herald-undo]")) { const u = S.herald?.undo; if (typeof u === "function") { S.herald.until = 0; u(); heraldNext(); } else if (u) undoRecord(u); return; }
@@ -2154,17 +1780,8 @@ $("#home").addEventListener("keydown", (e) => {
 });
 function openNext() {
   const P0 = homeParts();
-  if (!P0.next || sealed()) { heraldShow({ kind: "calm", text: sealed() ? "Sealed until morning" : "Nothing needs you right now" }, 2400); return; }
+  if (!P0.next) { heraldShow({ kind: "calm", text: "Nothing needs you right now" }, 2400); return; }
   decideKey(P0.next.key);
-}
-
-async function commissionFind(id) {
-  const p = FV.commission(id);
-  schedule();
-  const t = await p;
-  const f = FV.S.list.find((x) => x.id === id);
-  if (t) { announce(`Thread started in ${PROJ(t.project)}: ${f.title}`); heraldShow({ kind: "started", text: `Thread started: ${f.title}`, sub: PROJ(t.project), open: "t:" + t.id }, 6000); }
-  schedule();
 }
 
 // ── All threads: searchable, filtered; finished ones fold into one line ────
@@ -2226,7 +1843,7 @@ allEl.addEventListener("click", (e) => {
 
 // ── Create XO Project ───────────────────────────────────────────────────────
 const dlg = $("#create-dlg");
-let projectsRoot = world.mode === "live" ? null : "~/xo-projects";
+let projectsRoot = null;
 const slugify = (name) => String(name || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 function renderWhere() {
   const id = slugify($("#cp-name").value);
@@ -2245,7 +1862,7 @@ async function openCreate() {
   renderWhere();
   dlg.showModal();
   $("#cp-name").focus();
-  if (world.mode === "live" && !projectsRoot) {
+  if (!projectsRoot) {
     try {
       const { api } = await import("./api.js");
       const cfg = await api.workspaceConfig();
@@ -2275,19 +1892,11 @@ async function submitCreate() {
   btn.disabled = true;
   btn.innerHTML = `<i class="spin" aria-hidden="true"></i>Creating…`;
   try {
-    if (world.mode === "live") {
-      const { api } = await import("./api.js");
-      await api.createProject({ path: `${projectsRoot}/${id}`, displayName: name, description });
-      await world.act.refresh();
-    } else {
-      // Demo: simulated locally. Live calls GET /api/config/workspace, then POST /api/files/mkdir {path, scaffold:true, display_name, description}.
-      await wait(650);
-      world.state.projects.push({ id, name, kind: "project" });
-      await world.act.refresh();
-    }
+    const { api } = await import("./api.js");
+    await api.createProject({ path: `${projectsRoot}/${id}`, displayName: name, description });
+    await world.act.refresh();
     if (description) S.desc[id] = description;
-    if (!DEMO) S.local["p:" + id] = [{ id: `l${++S.n}_hello`, conv: "p:" + id, at: Date.now(), who: "event", tone: "ok", text: `${name} created · folder, plan and memory scaffolded${description ? ` · ${description.replace(/[.\s]+$/, "")}` : ""}` }];
-    else S.local["p:" + id] = [{ id: `l${++S.n}_hello`, conv: "p:" + id, at: Date.now(), who: "coord", text: `**${name}** is ready: its folder, plan and memory are scaffolded${description ? `, and I've noted what it's for: _${description.replace(/[.\s]+$/, "")}_` : ""}.\n\nTell me the first thing you'd like done.` }];
+    S.local["p:" + id] = [{ id: `l${++S.n}_hello`, conv: "p:" + id, at: Date.now(), who: "event", tone: "ok", text: `${name} created · folder, plan and memory scaffolded${description ? ` · ${description.replace(/[.\s]+$/, "")}` : ""}` }];
     closeCreate();
     go("p:" + id, { focus: true });
     heraldShow({ kind: "ready", text: `${name} is ready`, sub: `${projectsRoot}/${id}` }, 5200);
@@ -2537,23 +2146,7 @@ applyTheme(THEME.get());
 soundRender();
 PHONE.addEventListener("change", () => { setDrawer(false); render(); });
 
-(async () => {
-  // Place the demo at a moment of the day: day, evening, night, the morning, or back after days away.
-  S.booting = true;
-  try {
-  const phase = DEMO ? NIGHT.boot() : "day";
-  if (phase === "night") { await NIGHT.endDay(); P.sealed = true; }
-  else if (phase === "morning") {
-    await NIGHT.endDay();
-    NIGHT.runNight(NIGHT.away || 1);
-    S.morningOpen = true;
-    if (NIGHT.away) { const adm = D.needItems().filter((n) => n.admitted && !n.bypass); P.park(adm.slice(3).map((n) => n.key)); }
-  }
-  } finally { S.booting = false; }
-  world.subscribe(() => schedule());
-  follow();
-  loadDraft();
-  render();
-  absorbSweep();
-  if (world.mode === "demo") window.__cv = { world, S, P, D, R, FV, NIGHT, IQ, go, render, heraldShow, waitSince, sealDay, toMorning };
-})();
+world.subscribe(() => schedule());
+follow();
+loadDraft();
+render();
