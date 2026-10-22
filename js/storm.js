@@ -607,26 +607,27 @@ export function stormSource(state, emit, event) {
   addEventListener("online", () => stream && stream.nudge());
 
   // ── acting (writes happen only here, only when the person acts) ────────────
-  async function post(project, text, { threadTs, cid } = {}) {
+  async function post(project, text, { threadTs, cid, attachments } = {}) {
     const chat = chatIdOf(project);
     if (!chat) throw Object.assign(new Error(`No chat for ${project}`), { code: "no_chat" });
-    const row = await api.post(chat, { text, threadTs, clientId: cid });
+    const row = await api.post(chat, { text, threadTs, clientId: cid, attachments });
     event({ kind: "you", thread: threadTs || null, project, text });
     return row;
   }
   const threadOf = (id) => rawThreads.get(id) || null;
   const sought = new Set(); // findRows: what was already looked for
+  const hopsRead = new Set(); // loadChatHops: the chats whose hops were read
 
   return {
     act: {
       live: true,
       storm: true,
       /** A reply inside a thread: straight to its agent (a resolved or paused thread goes back to working). */
-      reply: async (threadId, text, { clientId: cid = newClientId() } = {}) => {
+      reply: async (threadId, text, { clientId: cid = newClientId(), attachments } = {}) => {
         const r = threadOf(threadId);
         if (!r) throw new Error("Unknown thread");
         const project = projectOf(r.chat_id);
-        const row = await post(project, text, { threadTs: threadId, cid });
+        const row = await post(project, text, { threadTs: threadId, cid, attachments });
         if (row) {
           const { list } = mergeRows(state.threadMsgs[threadId] || [], [row]);
           state.threadMsgs[threadId] = list;
@@ -635,9 +636,9 @@ export function stormSource(state, emit, event) {
         return row || null;
       },
       /** A message to a timeline (the Workspace or a project): its router decides what happens. */
-      ask: async (projectId, text, { clientId: cid = newClientId() } = {}) => {
+      ask: async (projectId, text, { clientId: cid = newClientId(), attachments } = {}) => {
         const project = projectId || "workspace";
-        const row = await post(project, text, { cid });
+        const row = await post(project, text, { cid, attachments });
         if (row) {
           addRows(project, [row]);
           state.awaiting[project] = { id: row.id, at: Date.now() };
@@ -764,6 +765,21 @@ export function stormSource(state, emit, event) {
         if (!r) return;
         try { const d = await api.hops(r.chat_id, { thread: ts, before_seq: NEWEST, limit: 200 }); for (const h of d.hops || []) state.hops.set(h.id, { ...(state.hops.get(h.id) || {}), ...h, at: h.created_at }); emitSoon(); } catch { /* the stream's hops still arrive */ }
       },
+      /**
+       * A Workspace or project chat's own hops, for "Show hops" on its timeline: the ones no thread
+       * holds (a coordinator acting on its own), and the forward and answer when its work went on to
+       * another project. Read once per chat; the stream's hops keep them current.
+       */
+      loadChatHops: async (project) => {
+        const chat = chatIdOf(project);
+        if (!chat || hopsRead.has(chat)) return;
+        hopsRead.add(chat);
+        try { const d = await api.hops(chat, { before_seq: NEWEST, limit: 500 }); for (const h of d.hops || []) state.hops.set(h.id, { ...(state.hops.get(h.id) || {}), ...h, at: h.created_at }); emitSoon(); } catch { hopsRead.delete(chat); }
+      },
+      /** The chat id of a project ("workspace" for the Workspace), for its attachments. */
+      chatId: (project) => chatIdOf(project),
+      /** The project a chat id belongs to. */
+      projectOf: (chat) => projectOf(chat),
       /**
        * Timeline rows named by id that aren't loaded yet (a message relayed into a thread, if1 #7).
        * There's no read by id, so this pages back from `beforeSeq` (the hop's seq bounds them from

@@ -1,14 +1,19 @@
 // The file viewer (if1 #2): a shared file opens in a panel beside the conversation, like a canvas.
 // Markdown renders (markdown.js), other text is coloured code with line numbers (highlight.js), and
-// HTML shows in a sandboxed frame with no scripts and no same-origin (Source shows its text). It
-// reads the project-scoped `/api/xo-projects/<project>/file` route only, never `/api/files/*`.
+// HTML shows in a sandboxed frame with no scripts and no same-origin (Source shows its text), and an
+// image shows fitted to the panel (Actual size, or a click on it, shows it 1:1). It reads the
+// project-scoped `/api/xo-projects/<project>/file` and `/image` routes only, never `/api/files/*`.
+// A file attached to a message (hub #30) opens here too: an image as itself, a PDF in a frame, text as
+// text (read with fetch, never rendered as HTML), all from the attachment route, which the server
+// guards with its own headers. A long paste not sent yet previews from the composer.
 // Esc closes it; on phones it takes the whole screen. Focus goes in, and back to the file card.
 
-import { esc } from "./util.js";
+import { esc, isImagePath } from "./util.js";
 import { ICON, $ } from "./ui.js";
 import { renderMarkdown } from "./markdown.js";
 import { highlight, langOf } from "./highlight.js";
-import { api } from "./api.js";
+import { api, attachmentUrl, attachmentText } from "./api.js";
+import { kindOf, typeWord } from "./attach.js";
 
 const size = (n) => (n == null ? "" : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 const bytes = (s) => new TextEncoder().encode(s).length;
@@ -17,19 +22,30 @@ const KIND_WORD = { markdown: "Markdown", html: "HTML", text: "Text", code: "Cod
 
 export function createViewer({ announce, onChange }) {
   const el = $("#viewer");
-  const V = { open: false, file: null, data: null, error: null, loading: false, mode: "preview", returnTo: null, gen: 0, copied: false };
+  const V = { open: false, file: null, data: null, error: null, loading: false, mode: "preview", returnTo: null, gen: 0, copied: false, dims: null };
+
+  /** The object URL an image is shown from lives as long as the image is open. */
+  function dropImage() {
+    if (V.data && V.data.url && !V.data.remote) URL.revokeObjectURL(V.data.url);
+  }
 
   function head() {
     const f = V.file, d = V.data;
-    const kind = d ? KIND_WORD[d.kind] || (extOf(f.name).toUpperCase() || "Text") : String(f.type || "").split("/").pop() || "";
-    const meta = [kind, size(d ? d.size_bytes : f.bytes)].filter(Boolean);
+    const kind = f.att || f.local != null ? typeWord(f.type || "", f.name) : d ? KIND_WORD[d.kind] || (extOf(f.name).toUpperCase() || "Text") : String(f.type || "").split("/").pop() || "";
+    // an attachment opens in its own tab too; text has no inline view there, so it downloads
+    const tab = f.att ? (kindOf(f.type || "") === "text"
+      ? `<a class="vw-btn" href="${esc(attachmentUrl(f.att.chat, f.att.id))}" download="${esc(f.name || "file")}" title="Download">${ICON.down}<span>Download</span></a>`
+      : `<a class="vw-btn" href="${esc(attachmentUrl(f.att.chat, f.att.id))}" target="_blank" rel="noopener noreferrer" title="Open in a new tab">${ICON.arrow}<span>New tab</span></a>`) : "";
+    const meta = [kind, V.dims && `${V.dims.w} × ${V.dims.h}`, size(d ? d.size_bytes : f.bytes)].filter(Boolean);
     const canCopy = !!(d && typeof d.content === "string");
     const toggle = d && d.kind === "html"
       ? `<div class="vw-seg" role="group" aria-label="Show"><button type="button" data-vw-mode="preview" aria-pressed="${V.mode === "preview"}">Preview</button><button type="button" data-vw-mode="source" aria-pressed="${V.mode === "source"}">Source</button></div>`
-      : "";
-    return `<header class="vw-top"><span class="vw-ic" aria-hidden="true">${ICON.doc}</span>` +
-      `<div class="vw-t"><h2 id="vw-h">${esc(f.name || f.path)}</h2><p class="vw-sub"><code title="${esc(f.where || f.path)}">${esc(f.where || f.path)}</code>${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p></div>` +
-      `<div class="vw-acts">${toggle}` +
+      : d && d.kind === "image"
+        ? `<div class="vw-seg" role="group" aria-label="Size"><button type="button" data-vw-mode="preview" aria-pressed="${V.mode === "preview"}">Fit</button><button type="button" data-vw-mode="actual" aria-pressed="${V.mode === "actual"}" aria-label="Actual size"><span class="vw-wide">Actual size</span><span class="vw-narrow" aria-hidden="true">1:1</span></button></div>`
+        : "";
+    return `<header class="vw-top"><span class="vw-ic" aria-hidden="true">${f.image ? ICON.image : ICON.doc}</span>` +
+      `<div class="vw-t"><h2 id="vw-h">${esc(f.name || f.path)}</h2><p class="vw-sub">${f.where ? `<code title="${esc(f.where)}">${esc(f.where)}</code>` : ""}${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</p></div>` +
+      `<div class="vw-acts">${toggle}${tab}` +
       (canCopy ? `<button type="button" class="vw-btn" data-vw-copy title="Copy the contents">${ICON.copy}<span>${V.copied ? "Copied" : "Copy"}</span></button>` : "") +
       `<button type="button" class="vw-x" data-vw-close aria-label="Close the file" title="Close (Esc)">${ICON.close}</button></div></header>`;
   }
@@ -46,6 +62,11 @@ export function createViewer({ announce, onChange }) {
     if (V.loading) return `<p class="vw-empty"><i class="spin" aria-hidden="true"></i> Reading the file…</p>`;
     if (V.error) return `<div class="vw-empty"><p>${esc(V.error)}</p></div>`;
     const d = V.data;
+    if (d.kind === "image") {
+      const actual = V.mode === "actual";
+      return `<div class="vw-img${actual ? " is-actual" : ""}"><img src="${esc(d.url)}" alt="${esc(V.file.name || "Image")}" draggable="false" title="${actual ? "Fit to the panel" : "Show at actual size"}"></div>`;
+    }
+    if (d.kind === "pdf") return `<iframe class="vw-frame vw-pdf" src="${esc(d.url)}" title="${esc(V.file.name || "PDF")}" referrerpolicy="no-referrer"></iframe>`;
     const text = String(d.content ?? "");
     const cut = d.truncated ? `<p class="vw-cut">${ICON.clock}<span>Showing the first ${esc(size(bytes(text)))} of ${esc(size(d.size_bytes))}. The rest isn't previewed.</span></p>` : "";
     let main;
@@ -58,20 +79,42 @@ export function createViewer({ announce, onChange }) {
   function render() {
     if (!V.open) return;
     const keep = el.querySelector(".vw-body")?.scrollTop || 0;
-    el.innerHTML = head() + `<div class="vw-body${V.data && V.data.kind === "html" && V.mode === "preview" ? " is-frame" : ""}" tabindex="0">${body()}</div>`;
+    const framed = V.data && ((V.data.kind === "html" && V.mode === "preview") || V.data.kind === "pdf");
+    el.innerHTML = head() + `<div class="vw-body${framed ? " is-frame" : ""}" tabindex="0">${body()}</div>`;
     if (V.keepScroll) el.querySelector(".vw-body").scrollTop = keep;
     V.keepScroll = false;
   }
 
+  /** An attachment or a paste, in the shape the body draws. Images and PDFs load from their URL. */
+  async function readAttachment(f) {
+    const name = f.name || "";
+    const textKind = /\.(md|markdown)$/i.test(name) || f.type === "text/markdown" ? "markdown" : "code";
+    if (f.local != null) return { kind: textKind, content: String(f.local), name, size_bytes: f.bytes };
+    const k = kindOf(f.type || "");
+    if (k !== "text") return { kind: k, url: attachmentUrl(f.att.chat, f.att.id), name, size_bytes: f.bytes, remote: true };
+    return { kind: textKind, content: await attachmentText(f.att.chat, f.att.id), name, size_bytes: f.bytes };
+  }
+
   async function load() {
     const my = ++V.gen;
-    V.loading = true; V.error = null; V.data = null;
+    dropImage();
+    V.loading = true; V.error = null; V.data = null; V.dims = null;
     render();
     try {
-      const d = await api.projectFile(V.file.project, V.file.rel);
-      if (my !== V.gen) return;
-      V.data = d;
-      if (typeof d.content !== "string") V.error = "XO sent this file without its text.";
+      if (V.file.att || V.file.local != null) {
+        const d = await readAttachment(V.file);
+        if (my !== V.gen) return;
+        V.data = d;
+      } else if (V.file.image) {
+        const blob = await api.projectImage(V.file.project, V.file.rel);
+        if (my !== V.gen) return;
+        V.data = { kind: "image", size_bytes: blob.size, url: URL.createObjectURL(blob) };
+      } else {
+        const d = await api.projectFile(V.file.project, V.file.rel);
+        if (my !== V.gen) return;
+        V.data = d;
+        if (typeof d.content !== "string") V.error = "XO sent this file without its text.";
+      }
     } catch (err) {
       if (my !== V.gen) return;
       V.error = err.status === 404 ? "This file isn't there any more." : err.message || "Couldn't read this file.";
@@ -80,10 +123,14 @@ export function createViewer({ announce, onChange }) {
     render();
   }
 
-  /** f: {name, path, type, bytes, project?, rel?, why?}; from: the element to return focus to. */
+  /**
+   * f: {name, path, type, bytes, project?, rel?, why?} for a shared file, {name, type, bytes, att:
+   * {chat, id}} for an attachment, {name, bytes, local: text} for a paste; from: where focus returns.
+   */
   function open(f, from) {
     const was = V.open;
-    Object.assign(V, { open: true, file: { ...f, where: f.rel || f.path }, data: null, error: null, why: f.why || null, mode: "preview", copied: false, returnTo: from || (was ? V.returnTo : document.activeElement) });
+    dropImage();
+    Object.assign(V, { open: true, file: { ...f, where: f.rel || f.path || "", image: f.att ? kindOf(f.type || "") === "image" : f.local == null && isImagePath(f.rel || f.path || f.name) }, data: null, dims: null, error: null, why: f.why || null, mode: "preview", copied: false, returnTo: from || (was ? V.returnTo : document.activeElement) });
     el.hidden = false;
     document.body.classList.add("viewer-open");
     if (!was) { el.classList.remove("is-in"); void el.offsetWidth; el.classList.add("is-in"); }
@@ -96,6 +143,7 @@ export function createViewer({ announce, onChange }) {
   function close({ restore = true } = {}) {
     if (!V.open) return;
     V.open = false; V.gen++;
+    dropImage(); V.data = null;
     el.hidden = true; el.innerHTML = "";
     document.body.classList.remove("viewer-open");
     const back = V.returnTo;
@@ -115,9 +163,23 @@ export function createViewer({ announce, onChange }) {
     if (e.target.closest("[data-vw-close]")) { close(); return; }
     const m = e.target.closest("[data-vw-mode]");
     if (m) { V.mode = m.dataset.vwMode; render(); return; }
+    if (e.target.closest(".vw-img img")) { V.mode = V.mode === "actual" ? "preview" : "actual"; render(); return; }
     if (e.target.closest("[data-vw-copy]")) { copy(String(V.data.content)); return; }
     if (e.target.closest("[data-vw-copy-path]")) copy(V.file.path);
   });
+  // an image's size shows in the header once it has decoded; one that won't decode says so
+  el.addEventListener("load", (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !V.data || V.data.kind !== "image" || V.dims) return;
+    V.dims = { w: img.naturalWidth, h: img.naturalHeight };
+    el.querySelector(".vw-top").outerHTML = head();
+  }, true);
+  el.addEventListener("error", (e) => {
+    if (!(e.target instanceof HTMLImageElement) || !V.data || V.data.kind !== "image") return;
+    V.error = "This image couldn't be shown: the file may be damaged or in a format this browser can't read.";
+    dropImage(); V.data = null;
+    render();
+  }, true);
   el.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
   });

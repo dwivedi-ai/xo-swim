@@ -24,6 +24,8 @@ import { runsStripHtml, runsListHtml, runViewHtml } from "./runsview.js";
 import { createSettings } from "./settings.js";
 import { createChats } from "./chats.js";
 import { createViewer } from "./viewer.js";
+import { createTray, fmtSize, kindOf, typeWord, isLargePaste, pasteLabel, uploadErrorText, FINAL, MAX_FILES } from "./attach.js";
+import { uploadAttachment, attachmentUrl } from "./api.js";
 
 const world = createWorld();
 
@@ -466,11 +468,11 @@ function messagesOf(conv) {
   const { on, alone } = threadAnchors(rows, ids);
   for (const m of rows) {
     const key = S.alias.get(m.id) || m.id;
-    const base = { key, at: m.at, seq: m.seq, text: m.text, sent: S.alias.has(m.id) };
+    const base = { key, at: m.at, seq: m.seq, text: m.text, sent: S.alias.has(m.id), files: m.files, chatId: m.chatId };
     if (m.who === "you") {
       out.push({ ...base, who: "you", fwd: conv !== "ws" && m.fwd ? m.fwd : null, routed: conv === "ws" ? st.routed[m.id] || null : null });
       if (alone.has(m.id)) out.push({ key: `${m.id}:card`, at: m.at, who: "card", thread: m.id });
-    } else if (m.who === "system") out.push({ ...base, who: "system" });
+    } else if (m.who === "system") out.push({ ...base, who: "system", passedOn: m.passedOn });
     else if (t && m.who === "agent" && /^✓\s/.test(m.text)) out.push({ key, at: m.at, who: "event", text: m.text.replace(/^✓\s*/, ""), tone: "ok" });
     else out.push({ ...base, who: m.who === "coord" ? "coord" : "agent", threads: on.get(m.id) || null });
   }
@@ -497,7 +499,7 @@ function messagesOf(conv) {
   // hops setting, marked as passed on, linking back to where you wrote them
   if (t && st.hops) {
     const { shown, missing } = relayedInto(t, st.hops.values(), st.timeline[t.project] || [], new Set(rows.map((m) => m.id)));
-    for (const m of shown) out.push({ key: `relay:${m.id}`, at: m.at, seq: m.seq, who: "you", text: m.text, relay: { project: t.project, id: m.id, fwd: m.fwd } });
+    for (const m of shown) out.push({ key: `relay:${m.id}`, at: m.at, seq: m.seq, who: "you", text: m.text, files: m.files, chatId: m.chatId, relay: { project: t.project, id: m.id, fwd: m.fwd } });
     if (world.act.findRows) for (const x of missing) world.act.findRows(t.project, x.ids, x.seq);
   }
   // how messages travelled to and from this thread (11 §16): hidden by default, shown by choice
@@ -505,6 +507,18 @@ function messagesOf(conv) {
     for (const hp of st.hops.values()) {
       if (hp.thread_ts !== t.id) continue;
       const text = hopLine(hp, PROJ(t.project));
+      if (text) out.push({ key: `hop:${hp.id}`, at: Date.parse(hp.at || hp.created_at) || 0, seq: hp.seq ?? null, who: "system", text });
+    }
+  }
+  // the Workspace's and a project's own hops, by the same choice: what a coordinator did on its own, and
+  // work handed on to another project (its forward and the answer back)
+  if (!t && chat && S.showHops && st.hops) {
+    const cid = world.act.chatId?.(chat);
+    // its own, and a forward into another project that one of its own asks caused
+    const mine = (hp) => hp.chat_id === cid || (hp.kind === "forward" && st.hops.get(hp.cause)?.chat_id === cid);
+    for (const hp of cid ? st.hops.values() : []) {
+      if (hp.thread_ts != null || !mine(hp)) continue;
+      const text = hopLine(hp, PROJ(chat), hp.kind === "forward" ? PROJ(world.act.projectOf?.(hp.chat_id) || "") : null);
       if (text) out.push({ key: `hop:${hp.id}`, at: Date.parse(hp.at || hp.created_at) || 0, seq: hp.seq ?? null, who: "system", text });
     }
   }
@@ -579,9 +593,16 @@ function msgItems(conv, needs) {
           ? `<div class="route-row">${ICON.arrow}<span>You, in the <button type="button" class="rt-go" data-go="ws" data-go-msg="${esc(r.fwd.id)}" title="Where you wrote it"><b>Workspace</b></button> · passed on by ${esc(P)}'s coordinator</span></div>`
           : `<div class="route-row">${ICON.arrow}<span>You, in <button type="button" class="rt-go" data-go="p:${esc(r.project)}" data-go-msg="${esc(r.id)}" title="Where you wrote it"><b>${esc(P)}'s chat</b></button> · passed on by the coordinator</span></div>`;
       }
-      else if (m.fwd) route = `<div class="route-row">${ICON.arrow}<span>Forwarded by the <button type="button" class="rt-go" data-go="ws"><b>Workspace</b></button></span></div>`;
+      else if (m.fwd) {
+        // work one project handed another: "from sys via the Workspace", back to where you wrote it
+        const src = fwdSource(m.fwd);
+        route = src
+          ? `<div class="route-row">${ICON.arrow}<span>From <button type="button" class="rt-go" data-go="p:${esc(src)}" data-go-msg="${esc(m.fwd.id)}" title="Where you wrote it"><b>${esc(PROJ(src))}</b></button> via the Workspace</span></div>`
+          : `<div class="route-row">${ICON.arrow}<span>Forwarded by the <button type="button" class="rt-go" data-go="ws" data-go-msg="${esc(m.fwd.id)}" title="Where you wrote it"><b>Workspace</b></button></span></div>`;
+      }
       else if (m.routed && m.routed.length) route = `<div class="route-row">${ICON.arrow}<span>Routed to ${[...new Set(m.routed.map((r) => r.chat))].map((c) => `<button type="button" class="rt-go" data-go="p:${esc(c)}"><b>${esc(PROJ(c))}</b></button>`).join(", ")}</span></div>`;
-      html = `<div class="m m-you${cont ? " cont" : ""}${m.relay ? " is-relay" : ""}${m.status === "failed" ? " is-failed" : ""}${m.status === "sending" ? " is-pending" : ""}"><div class="bubble" title="${esc(clock(m.at))}">${esc(m.text)}</div>${meta}${route}</div>`;
+      const files = m.files && m.files.length ? filesHtml(m.files, m.chatId) : "";
+      html = `<div class="m m-you${cont ? " cont" : ""}${m.relay ? " is-relay" : ""}${m.status === "failed" ? " is-failed" : ""}${m.status === "sending" ? " is-pending" : ""}">${m.text ? `<div class="bubble" title="${esc(clock(m.at))}">${esc(m.text)}</div>` : ""}${files}${meta}${route}</div>`;
     } else if (m.who === "coord" || m.who === "agent") {
       const [name, role] = nameOf(conv, m.who);
       const av = m.who === "coord" ? `<div class="av">${XO}</div>` : `<div class="av av-t">${ICON.thread}</div>`;
@@ -596,6 +617,10 @@ function msgItems(conv, needs) {
       html = `<div class="m m-them m-turn"><div class="av av-gap"></div><div class="mb">${inner}</div></div>`;
     } else if (m.who === "card") {
       html = `<div class="m m-them m-card"><div class="av av-gap"></div><div class="mb">${threadCardHtml(m.thread, needs)}</div></div>`;
+    } else if (m.who === "system" && m.passedOn) {
+      // XO's line: this project's work went on to another project, through the Workspace (always shown)
+      const p = m.passedOn;
+      html = `<div class="ev ev-sys ev-pass"><span class="ev-ic">${ICON.arrow}</span><span class="ev-t">Passed to <button type="button" class="rt-go" data-go="p:${esc(p.project)}"${p.to ? ` data-go-msg="${esc(p.to)}"` : ""} title="Open ${esc(PROJ(p.project))}'s chat"><b>${esc(PROJ(p.project))}</b></button> through the Workspace</span><time>${clock(m.at)}</time></div>`;
     } else if (m.who === "system") {
       html = `<div class="ev ev-sys" title="${esc(m.text)}"><span class="ev-ic">${ICON.router}</span><span class="ev-t">${esc(m.text)}</span><time>${clock(m.at)}</time></div>`;
     } else if (m.who === "note") {
@@ -1154,6 +1179,126 @@ function chipRender(fade = false) {
 
 // ── the composer: send, or Stop while something runs ───────────────────────
 const say = $("#say"), atList = $("#at-list");
+
+// ── files on the unsent message (hub #30): the paperclip, a drop or a paste adds them; each uploads
+// at once to the chat this conversation writes to, as a chip with its progress, Retry and Remove.
+// Send waits for every upload and stays off while one has failed. A long paste becomes a file.
+const trayEl = $("#att-tray"), attInput = $("#att-input");
+let trayRaf = 0;
+const tray = createTray({ upload: uploadAttachment, onChange: () => { if (!trayRaf) trayRaf = requestAnimationFrame(() => { trayRaf = 0; trayRender(); sendRender(); }); } });
+/** Storm conversations take files; a plain chat (Chats) has no route for them. */
+const canAttach = (v) => v !== "chats" && !CH.isChats(v);
+/** The chat id a file added here uploads to: the Workspace, the project, or the thread's project. */
+const attachChat = (v) => { const p = chatOf(v); return p && world.act.chatId ? world.act.chatId(p) : null; };
+const filesHere = () => (canAttach(S.view) ? tray.status(S.view) : { count: 0, busy: false, failed: false });
+// An image chip shows the picture itself, from the bytes the browser already holds: no request.
+const thumbs = new WeakMap(); // blob → object URL, freed when the chip leaves the composer
+const thumbOf = (c) => { let u = thumbs.get(c.blob); if (!u) { u = URL.createObjectURL(c.blob); thumbs.set(c.blob, u); } return u; };
+const dropThumb = (c) => { const u = c && thumbs.get(c.blob); if (u) { URL.revokeObjectURL(u); thumbs.delete(c.blob); } };
+function chipHtml(c) {
+  const img = c.type ? kindOf(c.type) === "image" : /^image\//.test(c.blob?.type || "");
+  const thumb = img && c.blob && c.state !== "failed";
+  // once uploaded it opens in the viewer, like a sent message's file
+  const ic = thumb ? `<img src="${esc(thumbOf(c))}" alt="" decoding="async">` : img ? ICON.image : ICON.doc;
+  const state = c.state === "failed" ? `<span class="att-err">${esc(uploadErrorText(c.err))}</span>`
+    : c.state === "uploading" ? `<span class="att-pct">Uploading</span>` : "";
+  const sub = [c.paste ? esc(c.name) : esc(fmtSize(c.bytes ?? c.size)), state].filter(Boolean).join(" · ");
+  const btn = (a, label, icon, extra = "") => `<button type="button" class="att-b" data-a="${a}" aria-label="${esc(label)}" title="${esc(label)}"${extra}>${icon}</button>`;
+  return `<li class="att st-${c.state}${c.paste ? " is-paste" : ""}" data-lid="${esc(c.lid)}"${c.err ? ` title="${esc(c.err.message || "")}"` : ""}>` +
+    (thumb && c.id ? `<button type="button" class="att-ic is-img" data-a="view" aria-label="Preview ${esc(c.name)}" title="Preview">${ic}</button>` : `<span class="att-ic${thumb ? " is-img" : ""}">${ic}</span>`) +
+    `<span class="att-t"><span class="att-n">${esc(c.paste ? pasteLabel(c.paste) : c.name)}</span><span class="att-m">${sub}</span></span>` +
+    (c.paste ? btn("view", "Preview the pasted text", ICON.eye) + `<button type="button" class="att-tx" data-a="inline" title="Put it back in the message as text">As text</button>` : "") +
+    (c.state === "failed" && !FINAL.has(c.err?.code) ? btn("retry", `Retry ${c.name}`, ICON.retry) : "") +
+    btn("x", `Remove ${c.paste ? "the pasted text" : c.name}`, ICON.close) +
+    `<i class="att-bar" aria-hidden="true"></i></li>`;
+}
+function trayRender() {
+  const on = canAttach(S.view);
+  $("#attach").hidden = !on;
+  const list = on ? tray.list(S.view) : [];
+  trayEl.hidden = !list.length;
+  $("#att-note").hidden = !list.length;
+  $("#composer").classList.toggle("has-files", !!list.length);
+  const html = list.map(chipHtml).join("");
+  if (trayEl._h !== html) { trayEl.innerHTML = html; trayEl._h = html; }
+  // progress moves without redrawing the chips (a focused Remove stays focused)
+  for (const c of list) {
+    const el = trayEl.querySelector(`[data-lid="${CSS.escape(c.lid)}"]`);
+    if (!el) continue;
+    const p = c.state === "uploading" ? Math.min(1, (c.sent || 0) / Math.max(1, c.size)) : c.state === "done" ? 1 : 0;
+    el.style.setProperty("--p", String(p));
+    const pct = el.querySelector(".att-pct");
+    if (pct) pct.textContent = c.sent ? `${Math.floor(p * 100)}%` : "Uploading";
+  }
+}
+function addFiles(files) {
+  const list = [...(files || [])];
+  if (!list.length) return;
+  if (!canAttach(S.view)) { announce("Files can't be attached in this conversation."); return; }
+  const chat = attachChat(S.view);
+  if (!chat) { heraldShow({ kind: "stopped", text: "Files can't be attached yet", sub: "still connecting to XO" }, 4600); return; }
+  const refused = tray.add(S.view, chat, list);
+  const took = list.length - refused.length;
+  if (refused.length) {
+    heraldShow({ kind: "stopped", text: refused.length === 1 ? `${refused[0].name} wasn't attached` : `${refused.length} files weren't attached`, sub: refused[0].why }, 6000);
+    announce(`${refused.map((r) => `${r.name}: ${r.why}`).join(" ")}`);
+  }
+  if (took) announce(`${took === 1 ? "1 file" : `${took} files`} uploading.`);
+  updateComposer();
+  say.focus({ preventScroll: true });
+}
+function insertText(text) {
+  say.focus({ preventScroll: true });
+  say.setRangeText(text, say.selectionStart, say.selectionEnd, "end");
+  updateComposer(); saveDraft();
+}
+$("#attach").innerHTML = ICON.clip;
+$("#attach").addEventListener("click", () => attInput.click());
+attInput.addEventListener("change", () => { addFiles(attInput.files); attInput.value = ""; });
+trayEl.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-a]");
+  const li = b && b.closest("[data-lid]");
+  if (!li) return;
+  const lid = li.dataset.lid, c = tray.list(S.view).find((x) => x.lid === lid);
+  if (!c) return;
+  if (b.dataset.a === "x") {
+    // just drop its id: the server sweeps a file no message names
+    const next = li.nextElementSibling?.querySelector("[data-a=x]") || li.previousElementSibling?.querySelector("[data-a=x]");
+    dropThumb(tray.remove(S.view, lid));
+    announce(`${c.paste ? "The pasted text" : c.name} removed.`);
+    trayRender();
+    (next && next.isConnected ? next : say).focus({ preventScroll: true });
+  } else if (b.dataset.a === "retry") tray.retry(S.view, lid);
+  else if (b.dataset.a === "view") VW.open(c.paste != null ? { name: c.name, bytes: c.size, local: c.paste } : { name: c.name, type: c.type, bytes: c.bytes ?? c.size, att: { chat: c.chat, id: c.id } }, b);
+  else if (b.dataset.a === "inline") { tray.remove(S.view, lid); insertText(c.paste); announce("The pasted text is back in the message."); }
+});
+say.addEventListener("paste", (e) => {
+  const cd = e.clipboardData;
+  if (!cd || !canAttach(S.view)) return;
+  const files = [...(cd.files || [])];
+  if (files.length) { e.preventDefault(); addFiles(files); return; }
+  const text = cd.getData("text/plain");
+  if (!text || !isLargePaste(text)) return;
+  const chat = attachChat(S.view);
+  if (!chat) return; // not connected yet: it goes in as text
+  e.preventDefault();
+  if (!tray.addPaste(S.view, chat, text)) { insertText(text); announce(`A message takes at most ${MAX_FILES} files, so the paste went in as text.`); return; }
+  announce("The long paste was added as a file. As text puts it back in the message.");
+  updateComposer();
+});
+// a drop anywhere on the page adds the files to the message being written
+{
+  const veil = $("#drop-veil");
+  $("#drop-ic").innerHTML = ICON.clip;
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  const hide = () => { depth = 0; veil.hidden = true; };
+  addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); if (canAttach(S.view) && !document.querySelector(".sheet:not([hidden]), dialog[open]")) { depth++; veil.hidden = false; } });
+  addEventListener("dragover", (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = veil.hidden ? "none" : "copy"; });
+  addEventListener("dragleave", (e) => { if (hasFiles(e) && --depth <= 0) hide(); });
+  addEventListener("drop", (e) => { if (!hasFiles(e)) return; e.preventDefault(); const on = !veil.hidden; hide(); if (on) addFiles(e.dataTransfer.files); });
+  addEventListener("dragend", hide);
+}
 function growSay() {
   say.style.height = "auto";
   const h = say.scrollHeight;
@@ -1175,7 +1320,8 @@ function running() {
 }
 function sendRender() {
   const btn = $("#send");
-  const empty = !say.value.replace(/(^|\s)@[\w.-]+/, "").trim();
+  const files = filesHere();
+  const empty = !say.value.replace(/(^|\s)@[\w.-]+/, "").trim() && !files.count;
   const run = empty ? running() : null;
   const mode = run ? "stop" : "send";
   if (btn.dataset.mode !== mode) {
@@ -1183,9 +1329,10 @@ function sendRender() {
     btn.innerHTML = run ? STOP_ICON : ICON.send;
     btn.classList.toggle("is-stop", !!run);
   }
-  btn.disabled = !run && (empty || !!liveBlock());
-  btn.setAttribute("aria-label", run ? (run.kind === "coord" ? "Stop the reply" : "Stop this run") : "Send");
-  btn.title = run ? (run.kind === "coord" ? "Stop the coordinator" : "Stop the agent (it keeps what's done)") : "Send (Enter)";
+  btn.disabled = !run && (empty || !!liveBlock() || files.busy || files.failed);
+  const wait = files.busy ? "Waiting for the files to upload" : files.failed ? "A file didn't upload: retry or remove it" : "";
+  btn.setAttribute("aria-label", run ? (run.kind === "coord" ? "Stop the reply" : "Stop this run") : wait ? `Send · ${wait}` : "Send");
+  btn.title = run ? (run.kind === "coord" ? "Stop the coordinator" : "Stop the agent (it keeps what's done)") : wait || "Send (Enter)";
 }
 /** A chat's line above the composer and its Send now toggle, which follow the chat's own state. */
 function chatTargetRender() {
@@ -1197,6 +1344,7 @@ function chatTargetRender() {
   return true;
 }
 function updateComposer() {
+  trayRender();
   if (chatTargetRender()) {
     syncPlaceholder();
     $("#composer").classList.toggle("has-text", !!say.value);
@@ -1388,7 +1536,10 @@ function sendLive(raw) {
   const tg = targetOf(raw, world.state.projects);
   if (tg.unknown) { heraldShow({ kind: "stopped", text: `No project called “${tg.unknown}”`, sub: "pick one from the @ list" }, 4600); announce(`There's no project called ${tg.unknown}. Nothing was sent.`); return; }
   const text = stripTarget(raw, tg.token);
-  if (!text) return;
+  const files = filesHere();
+  if (!text && !files.count) return;
+  if (files.busy) { announce("Not sent yet: waiting for the files to upload."); return; }
+  if (files.failed) { announce("Not sent: a file didn't upload. Retry or remove it first."); return; }
   const t = convThread(S.view);
   const thread = t && !tg.pid ? t : null;
   const chat = thread ? t.project : tg.pid || chatOf(S.view) || "workspace";
@@ -1397,6 +1548,7 @@ function sendLive(raw) {
   const from = say.getBoundingClientRect();
   // client_id: a retry of this exact message is the same request, so the server stores it once (UI-reference §0.7)
   const m = { id: `l${++S.n}_${Date.now().toString(36)}`, conv, at: Date.now(), who: "you", text, status: "sending", target: thread ? null : chat, cid: `ui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}` };
+  if (files.count) { m.files = tray.take(S.view); m.files.forEach(dropThumb); }
   (S.local[conv] = S.local[conv] || []).push(m);
   say.value = ""; saveDraft(); updateComposer();
   const btn = $("#send"); btn.classList.remove("fired"); void btn.offsetWidth; btn.classList.add("fired");
@@ -1410,17 +1562,38 @@ function sendLive(raw) {
 async function deliverLive(m, thread) {
   m.status = "sending"; delete m.err;
   try {
-    const row = thread ? await world.act.reply(thread.id, m.text, { clientId: m.cid }) : await world.act.ask(m.target || "workspace", m.text, { clientId: m.cid });
+    const row = await postWithFiles(m, thread);
     if (row && row.id) { S.alias.set(row.id, m.id); m.merged = true; }
     m.status = "sent";
     announce(thread ? "Sent to the thread." : `Sent to ${m.target === "workspace" ? "the coordinator" : PROJ(m.target)}.`);
   } catch (err) {
     m.status = "failed";
-    m.err = { title: sendErrorTitle(err), text: err.message || "" };
+    m.err = { title: err.fileErr ? `A file didn't upload: ${uploadErrorText(err)}` : err.code === "unknown_attachment" ? "A file is no longer on the server" : sendErrorTitle(err), text: err.message || "" };
     announce(`${m.err.title}. ${m.err.text} Your message is kept; retry or edit it.`);
     if (S.view !== m.conv) heraldShow({ kind: "stopped", text: m.err.title, sub: "open the conversation to retry", open: m.conv }, 6000);
   }
   schedule();
+}
+
+/**
+ * Post a message with its files. Each file is uploaded to the chat the message goes to (a message
+ * aimed elsewhere with @project takes its files along). If the server no longer knows one (an upload
+ * no message named is swept after a day), the same bytes go up again, once.
+ */
+async function postWithFiles(m, thread) {
+  const project = thread ? thread.project : m.target || "workspace";
+  const postIt = (attachments) => (thread
+    ? world.act.reply(thread.id, m.text, { clientId: m.cid, attachments })
+    : world.act.ask(project, m.text, { clientId: m.cid, attachments }));
+  if (!m.files || !m.files.length) return postIt();
+  const chat = world.act.chatId?.(project);
+  const up = (opts) => tray.ensure(m.files, chat, opts).catch((err) => { throw Object.assign(err, { fileErr: true }); });
+  try {
+    return await postIt(await up());
+  } catch (err) {
+    if (err.code !== "unknown_attachment") throw err;
+    return postIt(await up({ again: true }));
+  }
 }
 
 function send() {
@@ -1450,6 +1623,7 @@ function editFailed(id) {
   const i = list.findIndex((x) => x.id === id);
   if (i < 0) return;
   const [m] = list.splice(i, 1);
+  if (m.files && m.files.length) tray.restore(S.view, m.files);
   say.value = (m.target && m.target !== convProject(S.view) ? `@${m.target} ` : "") + m.text;
   updateComposer(); render(); say.focus();
 }
@@ -1589,8 +1763,14 @@ function follow() {
   world.act.watchSession?.(null);
   // a thread's hops are always read: a message relayed into it shows in place (if1 #7); their lines stay by choice
   if (t && world.act.loadHops) world.act.loadHops(t.id);
+  if (S.showHops && !t) loadChatHops(v);
   world.act.watch(v === "home" || v === "ws" ? ["workspace"] : v.startsWith("p:") ? [v.slice(2)] : t ? [t.project] : []);
   world.act.watchThread(t ? t.id : null);
+}
+/** "Show hops" on the Workspace or a project: read that chat's own hops once. */
+function loadChatHops(v) {
+  const chat = v === "ws" || v === "home" ? "workspace" : v.startsWith("p:") ? v.slice(2) : null;
+  if (chat && world.act.loadChatHops) world.act.loadChatHops(chat);
 }
 /** An open thread's root request lives on the project timeline; page back until it's there. */
 function ensureRoot() {
@@ -1634,6 +1814,30 @@ function showMsg(id) {
     setTimeout(() => el.classList.remove("is-flash"), 1800);
   };
   setTimeout(look, 120); // after the conversation has drawn and restored its scroll
+}
+
+// ── files on messages (hub #30): the shared-file card, opening in the same viewer ──
+/** The project a forwarded copy came from, when it wasn't the Workspace's own message (else null). */
+function fwdSource(fwd) {
+  const p = fwd.chatId && world.act.projectOf ? world.act.projectOf(fwd.chatId) : null;
+  if (p) return p === "workspace" ? null : p;
+  const v = fwd.via || [];
+  return v.length > 1 && v[0] !== "workspace" && v[0] !== "project" && world.project(v[0]) ? v[0] : null;
+}
+/** A message's files as cards: each opens in the viewer, read through `chatId` (the message's own chat). */
+function filesHtml(files, chatId) {
+  return `<ul class="tb-fl m-files" aria-label="Files">${files.map((f) => {
+    const chat = f.chat || chatId, can = !!(f.id && chat);
+    const img = kindOf(f.type || "") === "image";
+    const ic = img && can ? `<img src="${esc(attachmentUrl(chat, f.id))}" alt="" loading="lazy" decoding="async">` : img ? ICON.image : ICON.doc;
+    const meta = [f.type ? typeWord(f.type, f.name) : "", fmtSize(f.bytes ?? f.size)].filter(Boolean).join(" · ");
+    const attrs = can ? `data-att="${esc(f.id)}" data-att-chat="${esc(chat)}" data-att-name="${esc(f.name)}" data-att-type="${esc(f.type || "")}" data-att-bytes="${esc(f.bytes ?? "")}" aria-label="Open ${esc(f.name)}"` : "disabled";
+    return `<li class="tb-file"><button type="button" class="tb-fb${img && can ? " is-img" : ""}" ${attrs} title="${esc(f.name)}"><span class="tb-fi">${ic}</span><span class="tb-ft"><span class="tb-fn">${esc(f.name)}</span><span class="tb-fm">${esc(meta)}</span></span>${can ? `<span class="tb-fo" aria-hidden="true">Open${ICON.chevron}</span>` : ""}</button></li>`;
+  }).join("")}</ul>`;
+}
+function openAttachment(btn) {
+  const d = btn.dataset;
+  VW.open({ name: d.attName, type: d.attType, bytes: d.attBytes === "" ? null : Number(d.attBytes), att: { chat: d.attChat, id: d.att } }, btn);
 }
 
 // ── shared files: open in the viewer beside the conversation (if1 #2) ──
@@ -1757,6 +1961,8 @@ document.addEventListener("click", (e) => {
   if (r) { retry(r.dataset.retry); return; }
   const ed = t.closest("[data-edit]");
   if (ed) { editFailed(ed.dataset.edit); return; }
+  const ab = t.closest("[data-att]");
+  if (ab) { openAttachment(ab); return; }
   const fb = t.closest("[data-file]");
   if (fb) { openSharedFile(fb); return; }
   const cp = t.closest("[data-copy]");
@@ -1963,6 +2169,7 @@ $("#hops-tog").addEventListener("click", () => {
   hopsRender();
   const t = convThread(S.view);
   if (S.showHops && t && world.act.loadHops) world.act.loadHops(t.id);
+  if (S.showHops && !t) loadChatHops(S.view);
   announce(S.showHops ? "Showing how messages travel." : "Hiding how messages travel.");
   schedule();
 });

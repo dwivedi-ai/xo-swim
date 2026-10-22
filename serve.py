@@ -18,7 +18,8 @@ What it refuses, whatever the page asks:
   GETs write or call out);
 - the routes this UI never uses that expose secret values, raw files or
   file writes anywhere under $HOME (NEVER_FORWARD), in every spelling;
-- a request path with "#" or "." / ".." segments, raw or encoded.
+- a request path with "#" or "." / ".." segments, raw or encoded;
+- a body over 1 MiB, except an attachment upload (up to 25 MiB).
 
 Standard library only.
 """
@@ -103,6 +104,15 @@ def odd_path(path: str) -> bool:
 
 
 MAX_BODY = 1 << 20  # 1 MiB is plenty for a chat message
+# A file attached to a message (hub #30): the backend takes up to 25 MiB; a little more lets its own
+# 413 answer (with the limit in words) rather than ours.
+UPLOAD = re.compile(r"^/api/chat/chats/[^/]+/attachments$")
+MAX_UPLOAD = 25 * (1 << 20) + (64 << 10)
+
+
+def max_body(method: str, path: str) -> int:
+    """The largest request body forwarded for this route: MAX_UPLOAD for an attachment upload, else MAX_BODY."""
+    return MAX_UPLOAD if method == "POST" and UPLOAD.match(path.split("?", 1)[0]) else MAX_BODY
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -190,8 +200,11 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json_error(403, "cross_origin", msg)
 
         length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
-            return self._json_error(413, "too_large", "Request body is too large.")
+        cap = max_body(method, self.path)
+        if length > cap:
+            # the browser may still be sending: don't read it, and don't keep the connection
+            self.close_connection = True
+            return self._json_error(413, "too_large", "A file may be at most 25 MB." if cap == MAX_UPLOAD else "Request body is too large.")
         body = self.rfile.read(length) if length else None
 
         headers = {k: v for k, v in self.headers.items() if k.lower() not in DROP_REQUEST}

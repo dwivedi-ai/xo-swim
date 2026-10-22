@@ -7,6 +7,7 @@
 
 import { esc } from "./world.js";
 import { ICON, elapsed } from "./ui.js";
+import { isImagePath } from "./util.js";
 import { renderMarkdown, renderInline } from "./markdown.js";
 
 const KIND_ICON = {
@@ -82,7 +83,7 @@ function blockHtml(b, open, live, now) {
       const files = b.files || [];
       return `<div class="tb tb-files"><p class="tb-fh">${ICON.doc}<span>${esc(b.header || "Shared files")}${b.caption ? ` · ${esc(b.caption)}` : ""}</span></p>` +
         // each file opens in the viewer beside the conversation (if1 #2, js/viewer.js)
-        `<ul class="tb-fl">${files.map((f) => `<li class="tb-file"><button type="button" class="tb-fb" data-file="${esc(f.path || f.name)}" data-file-name="${esc(f.name || f.path)}" data-file-type="${esc(f.type || "")}" data-file-bytes="${esc(f.bytes ?? "")}" title="${esc(f.path || f.name)}" aria-label="Open ${esc(f.name || f.path)}"><span class="tb-fi">${ICON.doc}</span><span class="tb-ft"><span class="tb-fn">${esc(f.name || f.path)}</span><span class="tb-fm">${esc([String(f.type || "").split("/").pop(), size(f.bytes)].filter(Boolean).join(" · "))}</span></span><span class="tb-fo" aria-hidden="true">Open${ICON.chevron}</span></button></li>`).join("")}</ul></div>`;
+        `<ul class="tb-fl">${files.map((f) => `<li class="tb-file"><button type="button" class="tb-fb" data-file="${esc(f.path || f.name)}" data-file-name="${esc(f.name || f.path)}" data-file-type="${esc(f.type || "")}" data-file-bytes="${esc(f.bytes ?? "")}" title="${esc(f.path || f.name)}" aria-label="Open ${esc(f.name || f.path)}"><span class="tb-fi">${isImagePath(f.path || f.name) ? ICON.image : ICON.doc}</span><span class="tb-ft"><span class="tb-fn">${esc(f.name || f.path)}</span><span class="tb-fm">${esc([String(f.type || "").split("/").pop(), size(f.bytes)].filter(Boolean).join(" · "))}</span></span><span class="tb-fo" aria-hidden="true">Open${ICON.chevron}</span></button></li>`).join("")}</ul></div>`;
     }
     case "narration":
       return `<div class="tb tb-narr prose">${renderMarkdown(b.text || "")}</div>`;
@@ -138,7 +139,7 @@ function workFold(turn, work, blocks, open, live, now) {
     if (files.size) {
       const list = [...files.values()];
       const shown = list.slice(0, 6);
-      under += `<ul class="tb-chg" aria-label="Files changed">${shown.map((r) => `<li><button type="button" class="tb-cf" data-file="${esc(r.target)}" data-file-name="${esc(base(r.target))}" title="${esc(r.target)}"><span class="tb-cfi">${r.kind === "create_file" ? ICON.doc : ICON.edit}</span><span class="tb-cfn">${esc(base(r.target))}</span></button></li>`).join("")}` +
+      under += `<ul class="tb-chg" aria-label="Files changed">${shown.map((r) => `<li><button type="button" class="tb-cf" data-file="${esc(r.target)}" data-file-name="${esc(base(r.target))}" title="${esc(r.target)}"><span class="tb-cfi">${r.kind === "create_file" ? (isImagePath(r.target) ? ICON.image : ICON.doc) : ICON.edit}</span><span class="tb-cfn">${esc(base(r.target))}</span></button></li>`).join("")}` +
         (list.length > shown.length ? `<li><button type="button" class="tb-cf is-more" data-tb="${esc(key)}">+${list.length - shown.length} more</button></li>` : "") + `</ul>`;
     }
   }

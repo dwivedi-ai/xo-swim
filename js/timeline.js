@@ -1,12 +1,15 @@
 // Pure helpers between storm's rows (UI-reference §3) and the UI's message and ask
 // shapes. No DOM, no fetch: tested from Node (tests/logic.test.mjs).
 
+import { attachmentsOf } from "./attach.js";
 
 const COORDINATORS = new Set(["workspace-coordinator", "project-coordinator"]);
 
 /**
- * A storm message row → the UI's message: {id, seq, at, who: you|coord|agent|system, text, fwd, job}.
- * author_kind owner|agent|system; an agent's author_id is its role (UI-reference §3 Message).
+ * A storm message row → the UI's message: {id, chatId, seq, at, who: you|coord|agent|system, text, fwd,
+ * job, files, passedOn}. author_kind owner|agent|system; an agent's author_id is its role (UI-reference
+ * §3 Message). files: extra.attachments, read through this row's own chat (a forwarded copy has its own
+ * ids). passedOn: XO's note that this project's work went on to another project through the Workspace.
  */
 export function uiMsg(row) {
   const who = row.author_kind === "owner" ? "you"
@@ -14,8 +17,10 @@ export function uiMsg(row) {
       : COORDINATORS.has(row.author_id) ? "coord" : "agent";
   const x = row.extra || {};
   const f = x.forwarded_from;
+  const p = x.passed_on;
   return {
     id: row.id,
+    chatId: row.chat_id || null,
     seq: row.seq ?? null,
     at: Date.parse(row.created_at) || 0,
     who,
@@ -24,6 +29,8 @@ export function uiMsg(row) {
     fwd: f && f.message_id ? { chatId: f.chat_id || null, id: f.message_id, via: f.via || [] } : null,
     job: x.job || null,
     noOne: !!row.reply_to, // XO's "This message reached no one: …" note
+    files: attachmentsOf(row),
+    passedOn: p && p.project ? { project: String(p.project), to: (p.forwarded_message_ids || [])[0] || null } : null,
   };
 }
 
@@ -51,7 +58,7 @@ export function echoes(locals, rows, taken = new Set()) {
   const free = rows.filter((r) => r.who === "you" && !taken.has(r.id));
   for (const m of locals) {
     if (m.merged || m.status === "failed" || m.who !== "you") continue;
-    const i = free.findIndex((r) => r.text === m.text && r.at >= m.at - 60000);
+    const i = free.findIndex((r) => r.text === m.text && (r.files || []).length === (m.files || []).length && r.at >= m.at - 60000);
     if (i < 0) continue;
     out.set(m.id, free[i].id);
     free.splice(i, 1);
@@ -246,10 +253,12 @@ export async function mapLimit(items, cap, fn) {
 }
 
 /**
- * A hop as one quiet line in a thread (ch 11 §16), said from who sent it to whom, from the hop's own
- * roles: forward, relay, brief, ask, status, answer. project: the thread's project name.
+ * A hop as one quiet line in a thread or on a timeline (ch 11 §16), said from who sent it to whom, from
+ * the hop's own roles: forward, relay, brief, ask, status, answer. project: the conversation's project
+ * name; onward: the name of the project a forward went on to (work handed from one project to another
+ * through the Workspace has via ["project", "workspace"]).
  */
-export function hopLine(h, project) {
+export function hopLine(h, project, onward = null) {
   const who = (role) => ({ thread: "this thread", "project-coordinator": `the ${project} coordinator`, "workspace-coordinator": "the Workspace", xo: "XO", owner: "you", person: "you" })[role] || "someone";
   const from = who(h.from_role), to = who(h.to_role);
   const state = h.state === "sent" ? " · not taken up yet" : h.state === "answered" ? " · answered" : "";
@@ -258,7 +267,7 @@ export function hopLine(h, project) {
   // a coordinator or XO acting for this thread says so
   const forThread = via.includes("thread") && h.from_role !== "thread" && h.to_role !== "thread" ? " on behalf of this thread" : "";
   switch (h.kind) {
-    case "forward": return `Forwarded by the Workspace${state}`;
+    case "forward": return via.includes("project") && onward && onward !== project ? `Passed to ${onward} through the Workspace${state}` : `Forwarded by the Workspace${state}`;
     case "brief": return `${via.includes("workspace") ? "Forwarded by the Workspace, via the project" : `From ${from}`}${state}`;
     case "relay": return h.from_role === "project-coordinator" && h.to_role === "thread" && (h.message_ids || []).length ? `The ${project} coordinator passed on your message${state}` : `${up(from)} wrote to ${to}${forThread}${state}`;
     case "ask": return `${up(from)} asked ${to}${forThread}${state}`;

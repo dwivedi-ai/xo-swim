@@ -69,3 +69,7 @@ export function dayLabel(iso, now = Date.now()) {
 export function plural(n, one, many = one + "s") {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+/** Image types the file viewer shows, by suffix (the server's /image route takes the same ones). */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg)$/i;
+export const isImagePath = (path) => IMAGE_EXT.test(String(path || ""));

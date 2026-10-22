@@ -133,8 +133,93 @@ async function exchange(url, method, body, signal) {
 }
 
 const enc = encodeURIComponent;
+
+/** An ApiError from a non-2xx answer whose body is `text` (any of the four error shapes). */
+function errorOf(status, statusText, text) {
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  const d = data && data.detail;
+  const code = (d && d.code) || (data && data.error) || `http_${status}`;
+  let message = (d && d.message) || (typeof d === "string" ? d : "");
+  if (Array.isArray(d)) message = d.map((e) => `${(e.loc || []).slice(1).join(".")}: ${e.msg}`).join("; ");
+  if (!message) message = `${status} ${statusText || "error"}`;
+  return new ApiError(status, code, message);
+}
+
+// ── attachments (hub #30): a file is (chat id, attachment id); the browser never sees a path ──
+const attPath = (chat, id) => `${BASE}/chat/chats/${enc(chat)}/attachments/${enc(id)}`;
+
+/**
+ * The URL an <img> or <iframe> loads an attachment from. Those can't send headers, so inside Coder
+ * the token rides in the query (serve.py takes it out before forwarding, as for the stream).
+ */
+export const attachmentUrl = (chat, id) => attPath(chat, id) + (coderToken ? `?${TOKEN_PARAM}=${enc(coderToken)}` : "");
+
+/** An attachment's text, for the viewer (the server always sends text as text/plain). */
+export async function attachmentText(chat, id, { signal } = {}) {
+  const dl = deadline(signal, READ_MS);
+  let res;
+  try {
+    res = await fetch(attPath(chat, id), { signal: dl.signal, headers: coderHeaders(), redirect: "manual" });
+    if (res.type === "opaqueredirect") throw new ApiError(401, "signed_out", "Signed out of the workspace. Reopen this app from XO.");
+    const text = await res.text();
+    if (!res.ok) throw errorOf(res.status, res.statusText, text);
+    return text;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (err && err.name === "AbortError" && dl.timedOut()) throw new ApiError(0, "timeout", `XO didn't answer in ${Math.round(READ_MS / 1000)} s.`);
+    if (err && err.name === "AbortError") throw err;
+    throw new ApiError(0, "network", "Can't reach the UI server. Is serve.py running?");
+  } finally {
+    dl.done();
+  }
+}
+
+/**
+ * Upload one file's raw bytes to a chat. XMLHttpRequest, since fetch has no upload progress.
+ * Returns {promise → {id, name, type, bytes}, abort()}; onProgress(sent, total) as it goes.
+ * An abort rejects with an AbortError.
+ */
+export function uploadAttachment(chat, blob, name, { onProgress } = {}) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open("POST", `${BASE}/chat/chats/${enc(chat)}/attachments?name=${enc(name)}`);
+    for (const [k, v] of Object.entries(coderHeaders())) xhr.setRequestHeader(k, v);
+    xhr.setRequestHeader("Content-Type", blob.type || "application/octet-stream");
+    if (onProgress) xhr.upload.onprogress = (e) => onProgress(e.loaded, e.lengthComputable ? e.total : blob.size);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); } catch { reject(new ApiError(xhr.status, "bad_answer", "XO's answer to the upload wasn't readable.")); }
+      } else reject(errorOf(xhr.status, xhr.statusText, xhr.responseText));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "network", "Can't reach the UI server. Is serve.py running?"));
+    xhr.onabort = () => reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" }));
+    xhr.send(blob);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
 const get = (path, query) => request(path, { query });
 const send = (method, path, body, query) => request(path, { method, body, query });
+
+/** GET a file's bytes as a Blob; failures throw the same ApiErrors as `request`. */
+async function blob(path, { signal } = {}) {
+  const dl = deadline(signal, READ_MS);
+  try {
+    const res = await fetch(BASE + path, { signal: dl.signal, headers: coderHeaders(), cache: "no-store", redirect: "manual" });
+    if (res.type === "opaqueredirect") throw new ApiError(401, "signed_out", "Signed out of the workspace. Reopen this app from XO.");
+    if (res.ok) return await res.blob();
+    let d = null;
+    try { d = (await res.json()).detail; } catch { /* not JSON */ }
+    throw new ApiError(res.status, (d && d.code) || `http_${res.status}`, (d && d.message) || (typeof d === "string" ? d : "") || `${res.status} ${res.statusText || "error"}`);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    if (err && err.name === "AbortError" && dl.timedOut()) throw new ApiError(0, "timeout", `XO didn't answer in ${Math.round(READ_MS / 1000)} s.`);
+    if (err && err.name === "AbortError") throw err;
+    throw new ApiError(0, "network", "Can't reach the UI server. Is serve.py running?");
+  } finally {
+    dl.done();
+  }
+}
 
 /** A fresh id for a write that must never happen twice (UI-reference §0.7). */
 export const clientId = () => `ui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -159,8 +244,9 @@ export const api = {
   patchChat: (id, body) => send("PATCH", `/chat/chats/${enc(id)}`, body),
   /** {thread?, after_seq?, before_seq?, limit?} → {messages, next_after_seq, next_before_seq?} */
   messages: (chat, query = {}) => get(`/chat/chats/${enc(chat)}/messages`, query),
-  post: (chat, { text, threadTs, clientId: cid }) =>
-    send("POST", `/chat/chats/${enc(chat)}/messages`, { text, client_id: cid, ...(threadTs ? { thread_ts: threadTs } : {}) }),
+  /** attachments: ids uploaded to this same chat (uploadAttachment); text may be "" when there are some. */
+  post: (chat, { text, threadTs, clientId: cid, attachments }) =>
+    send("POST", `/chat/chats/${enc(chat)}/messages`, { text, client_id: cid, ...(threadTs ? { thread_ts: threadTs } : {}), ...(attachments && attachments.length ? { attachments } : {}) }),
   threads: (chat) => get(`/chat/chats/${enc(chat)}/threads`),
   thread: (chat, ts) => get(`/chat/chats/${enc(chat)}/threads/${enc(ts)}`),
   /** {resolved?, paused?: false, title?, label?, intelligence?} */
@@ -210,6 +296,8 @@ export const api = {
   // ── projects ──────────────────────────────────────────────────────────────
   /** A text file inside a project, for the file viewer: {name, kind, size_bytes, truncated, content, …}. */
   projectFile: (project, relativePath) => get(`/xo-projects/${enc(project)}/file`, { relative_path: relativePath }),
+  /** An image inside a project, as a Blob for the image viewer (fetched, so it carries the Coder header and errors read as words). */
+  projectImage: (project, relativePath, opts) => blob(`/xo-projects/${enc(project)}/image?relative_path=${enc(relativePath)}`, opts),
   /** Where xo-projects live: {roots: {...}, default}. Never hard-code the root. */
   workspaceConfig: () => get("/config/workspace"),
   /** Scaffold a new xo-project (xo-cowork-api). 409 when the folder exists. */
