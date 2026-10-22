@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("cv-theme")==="light"?"light":"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
-  <title>XO Space Cowork</title>
+  <title>XO Space</title>
   <link rel="stylesheet" href="./css/base.css">
   <link rel="stylesheet" href="./css/app.css">
   <link rel="stylesheet" href="./css/mode.css">
@@ -15,17 +15,22 @@
     <!-- Sidebar: Home, Workspace, then projects as button-like rows. Text only when a project needs you. -->
     <aside class="side" id="side" aria-label="Navigation">
       <div class="side-top">
-        <p class="brand"><span class="brand-mark" id="brand-mark"></span><b>Space</b><span>Cowork</span></p>
+        <p class="brand"><span class="brand-mark" id="brand-mark"></span><span class="sr-only">XO </span><b>Space</b></p>
         <button type="button" class="theme" id="theme" role="switch" aria-checked="false" aria-label="Light mode"></button>
         <button type="button" class="side-x" id="side-x" aria-label="Close menu"></button>
       </div>
+      <!-- Create XO Project: one easy, always-there entry under the brand -->
+      <button type="button" class="side-create" id="side-add"><span class="sc-ic" id="sc-ic"></span><span class="sc-t">Create XO Project</span></button>
       <nav class="nav" aria-label="Main">
         <button type="button" class="nrow" data-go="home" id="nv-home"><span class="nr-ic" id="ic-home"></span><span class="nr-name">Home</span><span class="nr-n" id="home-n"></span></button>
         <button type="button" class="nrow" data-go="ws" id="nv-ws"><span class="nr-ic nr-xo" id="ic-ws"></span><span class="nr-name">Workspace</span></button>
+        <button type="button" class="nrow" data-go="chats" id="nv-chats"><span class="nr-ic" id="ic-chats"></span><span class="nr-name">Chats</span></button>
       </nav>
-      <div class="side-label"><span id="projects-label">Projects</span><button type="button" class="side-add" id="side-add" aria-label="Create XO Project" title="Create XO Project"></button></div>
+      <div class="side-label"><span id="projects-label">Projects</span></div>
+      <!-- a filter once the list is long (hub #16): typing narrows it, ↑ ↓ and Enter open one, Esc clears -->
+      <div class="side-find" id="side-find" hidden><span class="sf-ic" id="sf-ic" aria-hidden="true"></span><input id="pf-in" type="search" placeholder="Find a project" autocomplete="off" spellcheck="false" aria-label="Find a project" aria-controls="projects"><span class="sf-n" id="pf-n" aria-live="polite"></span></div>
       <nav class="projects" id="projects" aria-labelledby="projects-label"></nav>
-      <div class="side-foot"><button type="button" class="help" id="help-side" aria-label="Keyboard shortcuts" title="Keys (?)">?</button></div>
+      <div class="side-foot"><button type="button" class="gear" id="set-side" title="Settings" aria-haspopup="true" aria-expanded="false"><span class="gear-ic" id="set-side-ic"></span><span class="gear-t">Settings</span></button></div>
     </aside>
     <div class="side-scrim" id="side-scrim" hidden></div>
 
@@ -33,7 +38,7 @@
       <header class="phonebar" id="phonebar">
         <button type="button" class="pb-menu" id="pb-menu" aria-label="Open menu" aria-controls="side" aria-expanded="false"></button>
         <span class="pb-t" id="pb-t"></span>
-        <button type="button" class="help" id="help-phone" aria-label="Keyboard shortcuts" title="Keys (?)">?</button>
+        <button type="button" class="help gear" id="set-phone" aria-label="Settings" title="Settings"></button>
       </header>
 
       <!-- Home: what's worth your time, then the end of the day -->
@@ -44,8 +49,9 @@
         <header class="top" id="top">
           <button type="button" class="top-back" id="top-back" hidden></button>
           <div class="top-who" id="top-who"></div>
+          <div class="now-wrap" id="now-wrap" hidden></div>
+          <div class="top-end" id="top-end"></div>
         </header>
-        <div class="now-wrap" id="now-wrap" hidden></div>
         <div class="thead" id="thead" hidden></div>
         <div class="scroller" id="scroller" tabindex="-1">
           <div class="column" id="column">
@@ -70,6 +76,7 @@
           </div>
           <div class="composer-row">
             <button type="button" class="target" id="target" title="Aim at a project (@)"></button>
+            <button type="button" class="tg-now" id="send-now" aria-pressed="false" title="Stop the turn in progress and send this now" hidden>Send now</button>
             <button type="button" class="iq" id="iq" aria-haspopup="dialog" aria-expanded="false" aria-controls="iq-pop"></button>
             <button type="submit" class="send" id="send" aria-label="Send" title="Send (Enter)" disabled></button>
           </div>
@@ -88,7 +95,39 @@
         <footer class="pn-foot" id="pn-foot"></footer>
       </section>
 
+      <!-- A shared file, opened beside the conversation (js/viewer.js) -->
+      <section class="viewer" id="viewer" role="dialog" aria-labelledby="vw-h" tabindex="-1" hidden></section>
+
       <div class="toast-wrap"><div class="toast" id="toast" role="status" hidden></div></div>
+
+      <!-- Settings: a page over the main area; closing it returns exactly where you were -->
+      <section class="settings" id="settings" role="dialog" aria-labelledby="set-h" hidden tabindex="-1">
+        <header class="set-top"><h1 id="set-h">Settings</h1><button type="button" class="x" id="set-x" aria-label="Close settings" title="Close (Esc)"></button></header>
+        <div class="set-body">
+          <nav class="set-nav" aria-label="Settings" role="tablist">
+            <button type="button" role="tab" data-set="general" aria-selected="true">General</button>
+            <button type="button" role="tab" data-set="appearance" aria-selected="false">Appearance</button>
+            <button type="button" role="tab" data-set="routing" aria-selected="false">Routing</button>
+            <button type="button" role="tab" data-set="rules" aria-selected="false">Rules</button>
+            <button type="button" role="tab" data-set="worktrees" aria-selected="false">Worktrees</button>
+            <button type="button" role="tab" data-set="night" aria-selected="false">Night mode</button>
+            <button type="button" role="tab" data-set="sounds" aria-selected="false">Sounds</button>
+            <button type="button" role="tab" data-set="keys" aria-selected="false">Keyboard</button>
+          </nav>
+          <div class="set-page" role="tabpanel" data-page="general"><header class="set-ph"><h2>General</h2><p class="set-intro">How the conversation shows what happens behind it.</p></header>
+            <div class="set-row"><div class="set-l"><b id="hops-l">Show how messages travel</b><span>Inside a thread, a quiet line each time a message passes between the workspace, a project's coordinator and the thread. Off unless you turn it on.</span></div><button type="button" class="switch" id="hops-tog" role="switch" aria-checked="false" aria-labelledby="hops-l"><span class="th-track" aria-hidden="true"><span class="th-knob"></span></span></button></div>
+          </div>
+          <div class="set-page" role="tabpanel" data-page="appearance" hidden><header class="set-ph"><h2>Appearance</h2><p class="set-intro">How XO looks on this device.</p></header><p class="set-empty"><b>Nothing to set yet.</b> Appearance settings arrive here once the backend can keep them.</p></div>
+          <div class="set-page" role="tabpanel" data-page="routing" hidden><header class="set-ph"><h2>Routing</h2></header><div class="set-live"></div></div>
+          <div class="set-page" role="tabpanel" data-page="rules" hidden><header class="set-ph"><h2>Rules</h2></header><div class="set-live"></div></div>
+          <div class="set-page" role="tabpanel" data-page="worktrees" hidden><header class="set-ph"><h2>Worktrees</h2></header><div class="set-live"></div></div>
+          <div class="set-page" role="tabpanel" data-page="night" hidden><header class="set-ph"><h2>Night mode</h2><p class="set-intro">What happens while you're away for the night.</p></header><p class="set-empty"><b>Nothing to set yet.</b> Night mode settings arrive here once the backend can keep them.</p></div>
+          <div class="set-page" role="tabpanel" data-page="sounds" hidden><header class="set-ph"><h2>Sounds</h2><p class="set-intro">Quiet sounds that confirm a decision.</p></header>
+            <div class="set-row"><div class="set-l"><b id="sound-l">Soft sounds</b><span>On Allow, Send back and “That's everything”. Off unless you turn them on.</span></div><button type="button" class="switch" id="sound-tog" role="switch" aria-checked="false" aria-labelledby="sound-l"><span class="th-track" aria-hidden="true"><span class="th-knob"></span></span></button></div>
+          </div>
+          <div class="set-page" role="tabpanel" data-page="keys" hidden><header class="set-ph"><h2>Keyboard</h2></header><div id="set-keys-list"></div></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -128,6 +167,14 @@
     </div>
   </div>
 
+  <!-- Sub-agents: the live list and the log of a thread's sub-agents; one opens like a thread of its own -->
+  <div class="sheet" id="runs" role="dialog" aria-modal="true" aria-labelledby="runs-h" hidden>
+    <div class="sheet-card runs-card" id="runs-card" tabindex="-1"></div>
+  </div>
+
+  <!-- A new chat's setup: folder, agent, model, effort, what it may do -->
+  <div class="iq-pop cs-pop" id="cs-pop" role="dialog" aria-label="New chat" tabindex="-1" hidden></div>
+
   <!-- Intelligence for this conversation: an anchored popover (a bottom sheet on a phone) -->
   <div class="iq-pop" id="iq-pop" role="dialog" aria-labelledby="iq-hh" tabindex="-1" hidden></div>
 
@@ -143,37 +190,7 @@
   <div class="sheet" id="keys" role="dialog" aria-modal="true" aria-labelledby="keys-h" hidden>
     <div class="sheet-card keys-card">
       <header class="sheet-h"><h2 id="keys-h">Keys</h2><button type="button" class="x" data-close aria-label="Close"></button></header>
-      <div class="keys-cols">
-        <dl class="keys">
-          <dt class="kh">Anywhere</dt><dd></dd>
-          <dt><kbd>N</kbd></dt><dd>Take the next move</dd>
-          <dt><kbd>H</kbd> · <kbd>W</kbd></dt><dd>Home · the Workspace</dd>
-          <dt><kbd>/</kbd></dt><dd>Write · <kbd>@</kbd> aims it at a project</dd>
-          <dt><kbd>⌘K</kbd> <kbd>Ctrl K</kbd></dt><dd>Jump to any project or thread</dd>
-          <dt><kbd>T</kbd></dt><dd>All threads in this project</dd>
-          <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous / next thread</dd>
-          <dt><kbd>C</kbd></dt><dd>Show or pin a thread's checklist</dd>
-          <dt><kbd>M</kbd> · <kbd>⌘.</kbd></dt><dd>Intelligence for this conversation (M in an empty composer)</dd>
-          <dt><kbd>Esc</kbd></dt><dd>Back, exactly where you were</dd>
-          <dt><kbd>U</kbd></dt><dd>Undo the last decision (3 s)</dd>
-        </dl>
-        <dl class="keys">
-          <dt class="kh">On a decision</dt><dd></dd>
-          <dt><kbd>A</kbd></dt><dd>Allow (routine, notable)</dd>
-          <dt>hold <kbd>↵</kbd></dt><dd>Allow a destructive ask (1.2 s)</dd>
-          <dt><kbd>D</kbd></dt><dd>Send back, with a note</dd>
-          <dt><kbd>1</kbd>–<kbd>9</kbd> · <kbd>R</kbd></dt><dd>Pick an answer · reply in words</dd>
-          <dt><kbd>E</kbd></dt><dd>Details, in place</dd>
-          <dt><kbd>O</kbd></dt><dd>Open the thread beside the panel</dd>
-          <dt><kbd>J</kbd> <kbd>K</kbd></dt><dd>Skip ahead / back; nothing is forced first</dd>
-          <dt><kbd>L</kbd> · <kbd>T</kbd></dt><dd>Later today · make it a rule</dd>
-          <dt><kbd>⇧A</kbd></dt><dd>Allow all routine together</dd>
-          <dt class="kh">In the intelligence popover</dt><dd></dd>
-          <dt><kbd>↑</kbd> <kbd>↓</kbd> · <kbd>←</kbd> <kbd>→</kbd></dt><dd>Model · depth</dd>
-          <dt><kbd>↵</kbd> · <kbd>A</kbd></dt><dd>Pin it · back to Auto</dd>
-        </dl>
-      </div>
-      <p class="keys-foot"><button type="button" class="sound-tog" id="sound-tog" aria-pressed="false"></button><span>Soft sounds on Allow, Send back and “That's everything”. Off unless you turn them on.</span></p>
+      <div class="keys-cols" id="keys-cols"></div>
     </div>
   </div>
 

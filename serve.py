@@ -10,8 +10,15 @@ responses are relayed chunk by chunk with no buffering.
 
 Why a proxy: the backend refuses browser writes whose Origin it does not
 recognise. This server is the browser's origin, so it applies its own
-same-origin check to writes and then forwards them WITHOUT the browser's
+same-origin check and then forwards WITHOUT the browser's
 Origin/Referer/Sec-Fetch-* headers (as a server-side proxy would).
+
+What it refuses, whatever the page asks:
+- any request, read or write, from a page it didn't serve (several backend
+  GETs write or call out);
+- the routes this UI never uses that expose secret values, raw files or
+  file writes anywhere under $HOME (NEVER_FORWARD), in every spelling;
+- a request path with "#" or "." / ".." segments, raw or encoded.
 
 Standard library only.
 """
@@ -20,10 +27,11 @@ from __future__ import annotations
 
 import http.client
 import os
+import re
 import socket
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 HOST = os.environ.get("HOST", "127.0.0.1")
@@ -40,12 +48,60 @@ DROP_REQUEST = {
     "transfer-encoding", "upgrade", "origin", "referer", "accept-encoding",
     "content-length", "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest",
     "sec-fetch-user",
+    # The Coder token the UI sends so Coder's app proxy lets it through; the
+    # backend has no use for it.
+    "coder-session-token",
 }
+# The same token in a query string (EventSource can't send headers).
+TOKEN_PARAM = "coder_session_token"
+
+
+def strip_token(path: str) -> str:
+    """`path` without the Coder token in its query, for forwarding and logs."""
+    base, sep, query = path.partition("?")
+    if not sep:
+        return path
+    kept = [p for p in query.split("&") if p.split("=", 1)[0] != TOKEN_PARAM]
+    return base + ("?" + "&".join(kept) if kept else "")
 DROP_RESPONSE = {
     "connection", "keep-alive", "transfer-encoding", "content-length", "server", "date",
     "access-control-allow-origin", "access-control-allow-credentials",
 }
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# Backend routes this UI never uses and that expose too much: raw secret values or bulk secret writes, and
+# raw reads or writes of any file under $HOME. They are never forwarded, whatever the page asks (the hub reuses this
+# handler, so the same holds there).
+NEVER_FORWARD = [
+    ("GET", re.compile(r"^/api/secrets/env$")),
+    ("GET", re.compile(r"^/api/secrets/.+/reveal$")),
+    ("PUT", re.compile(r"^/api/secrets/env$")),
+    ("PUT", re.compile(r"^/api/secrets$")),
+    ("POST", re.compile(r"^/api/files/content$")),
+    ("POST", re.compile(r"^/api/files/content-binary$")),
+    ("POST", re.compile(r"^/api/files/list-directory$")),
+    # writes anywhere under $HOME; this UI creates folders only with /api/files/mkdir
+    ("POST", re.compile(r"^/api/files/save$")),
+    ("POST", re.compile(r"^/api/files/upload$")),
+    # An agent profile's secrets file, unmasked (Hermes), and its whole-file replace: every method.
+    ("*", re.compile(r"^/api/agents/[^/]+/[^/]+/secrets$")),
+]
+
+
+def never_forward(method: str, path: str) -> bool:
+    """True for a route this proxy refuses: the path cut at "?" or "#", decoded (twice, for double
+    encoding), slashes collapsed and any trailing slash dropped, so no spelling of it slips through."""
+    p = unquote(unquote(re.split(r"[?#]", path, maxsplit=1)[0]))
+    p = re.sub(r"/+", "/", p).rstrip("/") or "/"
+    return any(m in (method, "*") and rx.match(p) for m, rx in NEVER_FORWARD)
+
+
+def odd_path(path: str) -> bool:
+    """True for a path no page of this UI sends: a "#", raw or encoded, or a "." or ".." segment, raw or
+    encoded. The backend doesn't resolve them today; refusing them keeps the checked path the routed one."""
+    p = unquote(unquote(path.split("?", 1)[0]))
+    return "#" in path or "#" in p or any(seg in (".", "..") for seg in p.split("/"))
+
+
 MAX_BODY = 1 << 20  # 1 MiB is plenty for a chat message
 
 
@@ -73,7 +129,8 @@ class Handler(SimpleHTTPRequestHandler):
     do_PUT = do_PATCH = do_DELETE = do_POST
 
     def _is_api(self) -> bool:
-        return self.path == "/api" or self.path.startswith("/api/")
+        path = self.path.split("?", 1)[0]
+        return path == "/api" or path.startswith("/api/")
 
     def end_headers(self):
         if not self._is_api():
@@ -88,7 +145,8 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         if "/stream" in self.path and os.environ.get("XO_UI_QUIET_STREAM", "1") == "1":
             return
-        sys.stderr.write("%s - %s\n" % (self.log_date_time_string(), fmt % args))
+        line = (fmt % args).replace(self.path, strip_token(self.path))
+        sys.stderr.write("%s - %s\n" % (self.log_date_time_string(), line))
 
     # ── same-origin check for writes ─────────────────────────────────────────
     def _write_allowed(self) -> bool:
@@ -118,8 +176,18 @@ class Handler(SimpleHTTPRequestHandler):
     # ── proxy ────────────────────────────────────────────────────────────────
     def _proxy(self):
         method = self.command
-        if method in WRITE_METHODS and not self._write_allowed():
-            return self._json_error(403, "cross_origin", "Cross-origin writes are refused by the UI proxy.")
+        # Browsers never send a fragment or dot segments. The backend drops a fragment before routing, so
+        # these could only be an attempt to make the path checked below differ from the path it routes.
+        if odd_path(self.path):
+            return self._json_error(400, "bad_target", "This UI never sends a request path like this.")
+        if never_forward("GET" if method == "HEAD" else method, self.path):
+            return self._json_error(403, "not_forwarded", "This UI never uses this route: it exposes secret values or raw files.")
+        # Every forwarded request answers only pages served by this UI (or no page: curl, the address bar).
+        # Reads too: several backend GETs write or call out, and a page from another site, or a sandboxed
+        # preview of an HTML file, must not reach them.
+        if not self._write_allowed():
+            msg = "Cross-origin writes are refused by the UI proxy." if method in WRITE_METHODS else "This is only answered for pages served by this UI."
+            return self._json_error(403, "cross_origin", msg)
 
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_BODY:
@@ -131,7 +199,7 @@ class Handler(SimpleHTTPRequestHandler):
         headers["Accept-Encoding"] = "identity"
         if body is not None:
             headers["Content-Length"] = str(len(body))
-        target = (_UP.path.rstrip("/") or "") + self.path
+        target = (_UP.path.rstrip("/") or "") + strip_token(self.path)
         is_stream = "/stream" in self.path.split("?", 1)[0]
 
         conn_cls = http.client.HTTPSConnection if _UP.scheme == "https" else http.client.HTTPConnection

@@ -1,6 +1,6 @@
-# 01 · The thesis: what XO Space Cowork is for
+# 01 · The thesis: what XO Space is for
 
-> One person directs many AI agents across many projects. The scarce resource is not compute or tokens. It is that person's attention. XO Space Cowork exists to spend it well.
+> One person directs many AI agents across many projects. The scarce resource is not compute or tokens. It is that person's attention. XO Space exists to spend it well.
 
 ## 1. The person and the situation
 

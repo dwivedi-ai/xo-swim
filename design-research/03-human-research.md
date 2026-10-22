@@ -247,7 +247,7 @@ The society ideator's insight about the person: they want to be *"the one whose 
 
 **Adjacent fields**: NASA mission-control voice loops (monitor without interrupting), ATC alert classes, PagerDuty grouping (Hudson's Bay cut alerts 61%), RimWorld's "notify me later" (*"Snooze is a missing primitive in most AI agent UIs"*), HEY's Screener.
 
-**The gap no product fills**: *a cross-project, person-centric control room where a coordinator triages, batches and explains many threads' asks.* That is what XO Space Cowork is.
+**The gap no product fills**: *a cross-project, person-centric control room where a coordinator triages, batches and explains many threads' asks.* That is what XO Space is.
 
 ---
 

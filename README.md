@@ -1,6 +1,6 @@
-# xo-swim
+# xo-coworker
 
-**Codename for XO Space Cowork: Smart Work & Ideas Management.**
+**XO Space's web UI.** Codename xo-swim: Smart Work & Ideas Management.
 
 A web UI for the XO Space **projects chat** backend (`/api/projects-chat/*`). It is built around one idea: protect the person's attention. The screen shows what is worth your time and the next action. Everything that only needs an agent stays quiet.
 
@@ -29,7 +29,9 @@ python3 serve.py                 # foreground, http://127.0.0.1:5180
 | `HOST`   | `127.0.0.1`             | bind address                  |
 
 `serve.py` (standard library only) serves the files and reverse-proxies `/api/*` to `XO_API`:
-- It applies its own same-origin check to writes, so cross-site writes get a 403.
+- It answers only pages it served: a request from any other page, read or write, gets a 403.
+- It never forwards the backend routes this UI doesn't use that expose secret values, raw files or file writes
+  under `$HOME`, however they are spelled, and refuses a path with `#` or dot segments.
 - It drops the browser's `Origin`, `Referer` and `Sec-Fetch-*` headers before forwarding.
 - It relays Server-Sent Events unbuffered.
 

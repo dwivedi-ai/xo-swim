@@ -37,7 +37,8 @@ Found while documenting (full detail in [05-visual-system.md](05-visual-system.m
 2. **[High]** The OS light-mode preference is ignored: the inline theme script always sets `data-theme`, defaulting to dark.
 3. **[Medium]** Light-mode high contrast (`prefers-contrast: more`) does nothing, because `app.css` overrides `tokens.css`.
 4. **[Medium]** About 35 dark-theme state colours are hard-coded as `rgb()` literals and don't switch in light; the Demo/Live badge is dark-only.
-5. **[Medium]** The tab title reads "◆ N · Converged", the concept's name, instead of XO Space Cowork.
+5. ~~**[Medium]** The tab title reads "◆ N · Converged", the concept's name.~~ Fixed 2026-10-21: "◆ N · XO Space".
+5a. **[Low]** On Home, two green-tiled "Create XO Project" buttons show at once (the sidebar's, added 2026-10-21 at the owner's request, and Home's own). 05 holds green as "the only accent, so the primary action is unmistakable"; two of the same action on one screen is a mild exception the owner chose. Revisit if it reads as noise in daily use.
 6. **[Medium]** The Keys sheet is inaccurate for `L` (works only on Think asks), `T` (opens All threads outside a card) and `A` (uppercase means allow-all).
 7. **[Low]** Two parallel token layers (`tokens.css` and `app.css`'s grey ladder); many `tokens.css` tokens unused.
 8. **[Low]** Dark `--ink-3` and `--ink-4` are nearly identical (5.8 vs 5.1:1).

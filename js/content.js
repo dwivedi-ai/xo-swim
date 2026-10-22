@@ -39,7 +39,7 @@ const KNOWN = [
 ];
 /** { min, steps } of agent work an answer frees (estimate). */
 export function leverageOf(n) {
-  const k = KNOWN.find((x) => x.re.test(n.ask.title || ""));
+  const k = n.ask.live ? null : KNOWN.find((x) => x.re.test(n.ask.title || ""));
   if (k) return { min: k.min, steps: k.steps };
   const left = Math.max(1, n.t.checklist.total - n.t.checklist.done);
   if (n.group === "stopped") return { min: left * 24 + 20, steps: left };
@@ -87,7 +87,8 @@ const SUGGEST = [
 ];
 /** Suggested answer, or null. Destructive and stopped asks never get one. */
 export function suggestFor(n) {
-  if (n.risk === "destructive" || n.group === "stopped") return null;
+  // Live asks never get a demo suggestion: only the server's own words appear there.
+  if (n.ask.live || n.t.live || n.risk === "destructive" || n.group === "stopped") return null;
   const s = SUGGEST.find((x) => x.re.test(n.ask.title || ""));
   return s ? { label: s.label, why: s.why, sure: s.sure } : null;
 }
@@ -95,6 +96,7 @@ export function suggestFor(n) {
 /** The one line under the headline. Short, never a paragraph. */
 export function whyLine(n) {
   if (n.group === "stopped") { const w = String(n.t.happened || "It stopped.").replace(/^Stopped:\s*/i, ""); return w.charAt(0).toUpperCase() + w.slice(1); }
+  if (n.ask.live) return n.ask.detail || "";
   if (/p-retry/.test(n.ask.title)) return "One small dependency for retries with backoff.";
   if (/disabled text/i.test(n.ask.title)) return "38% matches iOS; muted grey keeps 4.6:1 contrast.";
   if (/interview recordings/i.test(n.ask.title)) return "It has 6 of 9; the themes would skew without the rest.";
@@ -105,6 +107,7 @@ export function whyLine(n) {
 export function evidenceFor(n) {
   const a = n.ask, t = n.t, title = a.title || "";
   const ev = { change: null, facts: [], preview: null, why: a.full || a.detail || t.happened || "The agent is waiting on you before it continues." };
+  if (a.live) return ev; // live evidence is the server's own detail (js/review.js), never demo content
   if (/p-retry/.test(title)) {
     ev.change = { label: "package.json", lang: "diff", text: ` "dependencies": {\n   "stripe": "^12.0.0",\n+  "p-retry": "^6.2.0",\n   "zod": "^3.23.8"\n }` };
     ev.facts = ["1 dependency", "MIT", "0 transitive deps", "12 kB"];

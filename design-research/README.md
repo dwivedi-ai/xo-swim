@@ -1,6 +1,6 @@
-# XO Space Cowork: design research
+# XO Space: design research
 
-The design record for xo-swim (XO Space Cowork). It sets out **what** the interface is, **how** it was arrived at and **why** every part looks and behaves the way it does, with the human research behind each choice. It is written for designers, design directors and AI agents who need to understand the design before changing it.
+The design record for xo-swim, XO Space's web UI (called "XO Space Cowork" until 2026-10-21, when the owner shortened the brand to "XO Space"). It sets out **what** the interface is, **how** it was arrived at and **why** every part looks and behaves the way it does, with the human research behind each choice. It is written for designers, design directors and AI agents who need to understand the design before changing it.
 
 ## How to use this knowledge base
 

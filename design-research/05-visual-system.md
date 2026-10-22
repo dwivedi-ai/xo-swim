@@ -111,7 +111,11 @@ Shadows weaken to 28% (`--sha: .28`) in light, because heavy shadows on white lo
 
 ### 2.5 The XO mark
 
-The mark is two strokes: the **X** in primary ink (`--mark-x`) and the **O** in XO green (`--mark-o`, `#83D63A` in both themes). The brand reads "**Space** Cowork" (Space at weight 650, Cowork at 500). The Workspace uses the mark as its icon; projects use a letter tile. The coordinator's avatar is the mark, a thread agent's avatar is a blue thread icon, so you always know who is speaking without faces or names.
+The mark is two strokes: the **X** in primary ink (`--mark-x`) and the **O** in XO green (`--mark-o`, `#83D63A` in both themes). The brand reads **XO Space**: the mark, then "Space" at weight 650. The Workspace uses the mark as its icon; projects use the **cube** (`ICON.project`, a box with an inner fold). The coordinator's avatar is the mark, a thread agent's avatar is a blue thread icon, so you always know who is speaking without faces or names.
+
+**Decided 2026-10-21 (owner).**
+- **"Cowork" is dropped; the brand is "XO Space"** (sidebar, tab title). This UI is becoming the only UI of XO Space (the old Space UI is being absorbed and then retired), so it carries the product's own name. Until then it read "**Space** Cowork".
+- **The cube is back wherever a project is listed or titled**: sidebar rows, the project page title, the composer's @ list, Jump and the Create XO Project dialog. The owner asked for the classic UI's project icon back. It replaces the letter tile that came in with 17 · Converged. A row's busy dot and its amber or red needs-you tint stay on the cube's tile, so state still reads at a glance. Inline mentions (the back link, "project › thread" paths, "Routed to …" receipts) stay plain text, so a line of prose isn't broken up by icons.
 
 ## 3. Typography
 
@@ -209,6 +213,7 @@ The code inventory found these gaps between stated intent and shipped CSS/JS. Th
 5. **Dark ink-3 (`#909090`) and ink-4 (`#878787`) are almost the same** (5.8 vs 5.1:1), so the two quiet tiers barely separate.
 6. **The composer's focus indicator is weak**: `outline: none`, and the border changes `#2E2E2E → #3E3E3E` (about 1.7:1 against the canvas).
 7. **"Nothing bounces"** vs the overshooting `--spring` on stamps and the lock; **"nothing below 10.5px"** vs 9–10 px glyphs in the checklist.
-8. **The tab title reads "◆ N · Converged"**, the concept's name, not "XO Space Cowork".
+8. ~~**The tab title reads "◆ N · Converged"**, the concept's name.~~ Fixed 2026-10-21: it reads "◆ N · XO Space".
+9. **Light, not costume (2026-10-22, if1 rework).** Ideas taken, toned down, from `launchpad-demo`. The canvas behind Home and Settings has a faint atmosphere (`--atmos`: green top-left, blue top-right, at 5–9 %). A 2 px state line runs along the top of the decision card and a thread's header: amber needs you, blue working, green done, red stopped. Blue is the only line that moves, as one slow sweep, and it stops under reduced motion. Code sits on a deeper `--term-bg`, and code colours are `--code-*` tokens mixed from the palette's own hues. Counts and ids are mono with tabular digits. Still nothing glows, and colour still means status, except inside code.
 
 See [10-open-questions.md](10-open-questions.md) for which of these are worth fixing.

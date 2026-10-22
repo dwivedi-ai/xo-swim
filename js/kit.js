@@ -17,6 +17,7 @@
 //     needs-you channel is complete in live mode.
 // ─────────────────────────────────────────────────────────────────────────────
 import { WAITING } from "./world.js";
+import { itemBody } from "./review.js";
 
 export const COMMIT_MS = 3000;   // commit window before the world call
 export const HOLD_MS = 1200;     // destructive press-and-hold
@@ -74,6 +75,11 @@ export const teachSentence = (house, cmd) => `Standing rule for ${house}: you ma
  */
 export function answer(world, t, ask, choice, note = "") {
   note = String(note || "").trim();
+  // A storm review item: the decision route, with the item's own options (never a thread message,
+  // which would withdraw the item instead of answering it).
+  if (ask && ask.item) return world.act.decideItem(ask.item.id, itemBody(ask.item, choice, note));
+  // A pending approval whose item hasn't arrived: never answer it with a message.
+  if (ask && ask.pending) return Promise.reject(new Error("Open the thread to see what it needs."));
   if (choice && typeof choice === "object") {
     if (choice.text != null) return world.act.reply(t.id, choice.text);
     return world.act.reply(t.id, choice.option + (note ? ` (${note})` : ""));

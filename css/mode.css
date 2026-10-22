@@ -13,4 +13,6 @@
 .uxc-seg button[aria-pressed="true"]{background:#e1e1e1;color:#141414}
 @media (prefers-reduced-motion:reduce){.uxc-pop{animation:none}}
 /* On phones, sheets own the bottom edge: step aside while one is open. */
-@media (max-width:760px){body.panel-open .uxc,body:has(#iq-pop:not([hidden])) .uxc,body:has(.sheet:not([hidden])) .uxc{display:none}}
+@media (max-width:760px){body.panel-open .uxc,body:has(#iq-pop:not([hidden])) .uxc,body:has(.sheet:not([hidden])) .uxc,body:has(#cs-pop:not([hidden])) .uxc{display:none}}
+/* Phone: the badge and its switch are reachable with a thumb (36 px) without growing on screen. */
+@media (max-width:760px){.uxc-me{position:relative}.uxc-me::after{content:"";position:absolute;inset:-6px -2px}.uxc-seg button{height:36px;padding:0 14px}}
